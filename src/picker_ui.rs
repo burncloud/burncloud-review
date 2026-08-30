@@ -18,12 +18,11 @@ pub fn draw(frame: &mut Frame, picker: &PrPicker, backend: &str) {
         ])
         .split(frame.area());
 
-    let header = Paragraph::new(format!("Reviewer: {backend}"))
-        .block(
-            Block::default()
-                .title(format!(" BurnCloud Review · {} ", picker.repository))
-                .borders(Borders::ALL),
-        );
+    let header = Paragraph::new(format!("Reviewer: {backend}")).block(
+        Block::default()
+            .title(format!(" BurnCloud Review · {} ", picker.repository))
+            .borders(Borders::ALL),
+    );
     frame.render_widget(header, vertical[0]);
 
     let body = Layout::default()
@@ -88,9 +87,7 @@ pub fn draw_loading(frame: &mut Frame, repository: &str, backend: &str, message:
         .borders(Borders::ALL);
     let text = format!("{message}\n\nReviewer: {backend}");
     frame.render_widget(
-        Paragraph::new(text)
-            .block(block)
-            .wrap(Wrap { trim: true }),
+        Paragraph::new(text).block(block).wrap(Wrap { trim: true }),
         frame.area(),
     );
 }
