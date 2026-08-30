@@ -89,10 +89,7 @@ impl AiClient {
         let mut report: AiReviewReport =
             serde_json::from_str(json_text).context("decode AI review report JSON")?;
 
-        // The model is an advisory reviewer. It may escalate deterministic risk, never lower it.
         report.risk = max_risk(classify_risk(&data.files), report.risk);
-
-        // Hard CI evidence has precedence over a model's Evidence Gate opinion.
         report.gates.evidence.status =
             clamp_evidence_status(report.gates.evidence.status, &data.ci.state);
 
@@ -115,15 +112,11 @@ struct ChatMessage {
     content: String,
 }
 
-const SYSTEM_PROMPT: &str = r#"You are the independent reviewer for BurnCloud pull requests.
-The coding agent is not trusted to review itself. Be adversarial, evidence-driven, and concise.
+const SYSTEM_PROMPT: &str = r#"You are the independent senior reviewer for BurnCloud pull requests.
+The coding agent is not trusted to review itself. Build a detailed review dossier for a human maintainer, not a short summary.
 
-Review every change through five gates:
-1. Scope: did the implementation stay inside the stated change boundary?
-2. Code: correctness, concurrency, error handling, security, resource cleanup, performance, compatibility.
-3. Behavior: which runtime/user-visible execution paths change, including failure behavior?
-4. Architecture: did a component take responsibilities that belong to another component?
-5. Evidence: are CI/tests/evidence sufficient for the risk level?
+Review every change through five gates: Scope, Code, Behavior, Architecture, Evidence.
+Do not invent source facts. Distinguish demonstrated defects from missing evidence. Only anchor findings to file/line when the supplied patch supports it.
 
 Risk policy:
 R0 docs-only.
@@ -133,26 +126,63 @@ R3 network control-plane/auth/security/identity changes.
 R4 billing/settlement/clearing/wallet/ledger changes.
 Choose the higher level when uncertain.
 
+Each gate must contain detailed sections, not one paragraph.
+Scope sections: 任务目标与验收条件; 允许修改边界; 实际修改范围; 无关或越界改动; Scope 判定.
+Code sections: 核心正确性; 错误与异常路径; 并发 / 状态 / 资源生命周期; 安全边界; 性能与兼容性; 回归风险与测试点.
+Behavior sections: 修改前执行路径; 修改后执行路径; 用户 / 调用方可见变化; 失败路径; 状态与副作用; 兼容性判定.
+Architecture sections: 组件职责; 依赖方向; 跨层调用与边界; 耦合与职责泄漏; 可扩展性与维护成本; Architecture 判定.
+Evidence sections: 本地 CI 证据; Patch 覆盖度; 测试充分性; 尚缺验证; Evidence 判定.
+
+For each section, provide a substantive conclusion and concrete evidence. Prefer paths, functions, state transitions and call-flow evidence. If context is unavailable, say so in missing_evidence.
+
 Finding severity:
 BLOCKER = unsafe to merge.
 MAJOR = material correctness/architecture/regression problem.
 MINOR = real but non-blocking improvement.
 NIT = style or low-value polish.
 
-Do not invent source facts. If evidence is missing, say that evidence is missing instead of claiming a bug.
-Only report a file/line when the supplied patch supports it.
-Write every reviewer-facing natural-language field in Simplified Chinese, including summary, merge_recommendation, gate summaries/items, component impact/reason, and finding title/explanation/suggestion. Keep enum values, category values, code identifiers, paths, function names, and status tokens unchanged.
+Write every reviewer-facing natural-language field in Simplified Chinese. Keep enum values, category values, code identifiers, paths, function names, and status tokens unchanged.
 Return exactly one JSON object and no Markdown fences, using this shape:
 {
   "summary": "...",
   "risk": "R0|R1|R2|R3|R4",
   "merge_recommendation": "...",
   "gates": {
-    "scope": {"status":"PASS|WARN|FAIL|PENDING","summary":"...","items":["..."]},
-    "code": {"status":"PASS|WARN|FAIL|PENDING","summary":"...","items":["..."]},
-    "behavior": {"status":"PASS|WARN|FAIL|PENDING","summary":"...","items":["..."]},
-    "architecture": {"status":"PASS|WARN|FAIL|PENDING","summary":"...","items":["..."]},
-    "evidence": {"status":"PASS|WARN|FAIL|PENDING","summary":"...","items":["..."]}
+    "scope": {
+      "status":"PASS|WARN|FAIL|PENDING",
+      "summary":"...",
+      "items":["..."],
+      "sections":[{"title":"...","conclusion":"...","evidence":["..."]}],
+      "missing_evidence":["..."]
+    },
+    "code": {
+      "status":"PASS|WARN|FAIL|PENDING",
+      "summary":"...",
+      "items":["..."],
+      "sections":[{"title":"...","conclusion":"...","evidence":["..."]}],
+      "missing_evidence":["..."]
+    },
+    "behavior": {
+      "status":"PASS|WARN|FAIL|PENDING",
+      "summary":"...",
+      "items":["..."],
+      "sections":[{"title":"...","conclusion":"...","evidence":["..."]}],
+      "missing_evidence":["..."]
+    },
+    "architecture": {
+      "status":"PASS|WARN|FAIL|PENDING",
+      "summary":"...",
+      "items":["..."],
+      "sections":[{"title":"...","conclusion":"...","evidence":["..."]}],
+      "missing_evidence":["..."]
+    },
+    "evidence": {
+      "status":"PASS|WARN|FAIL|PENDING",
+      "summary":"...",
+      "items":["..."],
+      "sections":[{"title":"...","conclusion":"...","evidence":["..."]}],
+      "missing_evidence":["..."]
+    }
   },
   "affected_components": [
     {"name":"...","impact":"...","reason":"..."}
@@ -172,12 +202,12 @@ Return exactly one JSON object and no Markdown fences, using this shape:
 "#;
 
 fn build_prompt(data: &PullRequestData) -> String {
-    const TOTAL_PATCH_LIMIT: usize = 120_000;
-    const PER_FILE_LIMIT: usize = 16_000;
+    const TOTAL_PATCH_LIMIT: usize = 160_000;
+    const PER_FILE_LIMIT: usize = 24_000;
 
     let mut out = String::new();
     out.push_str(&format!(
-        "Repository: {}\nPR: #{} {}\nAuthor: {}\nState: {} draft={}\nBase: {}\nHead: {} @ {}\nStats: +{} -{} across {} files\nCI combined state: {}\n\nPR description:\n{}\n\nChanged files and patches:\n",
+        "Repository: {}\nPR: #{} {}\nAuthor: {}\nState: {} draft={}\nBase: {}\nHead: {} @ {}\nStats: +{} -{} across {} files\nLocal CI combined state: {}\n\nPR description:\n{}\n\nChanged files and patches:\n",
         data.repository,
         data.pr.number,
         data.pr.title,
@@ -229,15 +259,17 @@ fn build_prompt(data: &PullRequestData) -> String {
     }
 
     if !data.ci.statuses.is_empty() {
-        out.push_str("\nCI contexts:\n");
+        out.push_str("\nLocal CI contexts:\n");
         for status in &data.ci.statuses {
             out.push_str(&format!(
-                "- {}: {} — {}\n",
+                "\n--- {}: {} ---\n{}\n",
                 status.context,
                 status.state,
-                status.description.as_deref().unwrap_or("")
+                status.evidence_text()
             ));
         }
+    } else {
+        out.push_str("\nLocal CI contexts: <none supplied>\n");
     }
     out
 }

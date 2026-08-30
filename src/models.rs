@@ -192,6 +192,16 @@ impl GateKind {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GateSection {
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub conclusion: String,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GateReview {
     #[serde(default)]
     pub status: GateStatus,
@@ -199,6 +209,64 @@ pub struct GateReview {
     pub summary: String,
     #[serde(default)]
     pub items: Vec<String>,
+    #[serde(default)]
+    pub sections: Vec<GateSection>,
+    #[serde(default)]
+    pub missing_evidence: Vec<String>,
+}
+
+impl GateReview {
+    pub fn detailed_text_cn(&self) -> String {
+        let mut text = String::new();
+        if !self.summary.trim().is_empty() {
+            text.push_str("结论摘要\n");
+            text.push_str(self.summary.trim());
+        }
+
+        if !self.items.is_empty() {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str("关键判断\n");
+            for item in &self.items {
+                text.push_str(&format!("• {item}\n"));
+            }
+        }
+
+        for (index, section) in self.sections.iter().enumerate() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            let title = if section.title.trim().is_empty() {
+                format!("审查项 {}", index + 1)
+            } else {
+                section.title.trim().to_string()
+            };
+            text.push_str(&format!("\n━━ {title} ━━\n"));
+            if !section.conclusion.trim().is_empty() {
+                text.push_str(section.conclusion.trim());
+                text.push('\n');
+            }
+            if !section.evidence.is_empty() {
+                text.push_str("证据 / 推理依据:\n");
+                for evidence in &section.evidence {
+                    text.push_str(&format!("  • {evidence}\n"));
+                }
+            }
+        }
+
+        if !self.missing_evidence.is_empty() {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str("\n━━ 缺失证据 / 仍需验证 ━━\n");
+            for item in &self.missing_evidence {
+                text.push_str(&format!("• {item}\n"));
+            }
+        }
+
+        text
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

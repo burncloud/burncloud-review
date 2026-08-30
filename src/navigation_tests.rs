@@ -1,8 +1,8 @@
 use crate::{
-    app::{App, NodeId},
+    app::{App, Focus, NodeId},
     models::{
-        AiReviewReport, ChangedFile, CombinedStatus, Finding, GateReviews, GitHubUser, GitRef,
-        PullRequest, PullRequestData, RiskLevel, Severity,
+        AiReviewReport, ChangedFile, CombinedStatus, Finding, GateReview, GateReviews, GateSection,
+        GitHubUser, GitRef, PullRequest, PullRequestData, RiskLevel, Severity,
     },
 };
 
@@ -84,7 +84,6 @@ fn drills_from_pr_to_file_hunk_and_changed_line() {
         .iter()
         .any(|entry| matches!(entry.id, NodeId::Line(0, 0, _))));
 
-    // Left first closes an expanded layer in place.
     app.collapse_selected();
     assert_eq!(app.selected_id(), NodeId::Hunk(0, 0));
     assert!(!app
@@ -92,9 +91,47 @@ fn drills_from_pr_to_file_hunk_and_changed_line() {
         .iter()
         .any(|entry| matches!(entry.id, NodeId::Line(0, 0, _))));
 
-    // Left again on the already-closed layer walks back to its parent.
     app.collapse_selected();
     assert_eq!(app.selected_id(), NodeId::File(0));
+}
+
+#[test]
+fn right_arrow_enters_detail_and_arrows_scroll() {
+    let mut app = App::new(sample_data());
+    app.expanded.insert(NodeId::Gates);
+    select(&mut app, NodeId::Gate(crate::models::GateKind::Scope));
+
+    assert_eq!(app.focus, Focus::Tree);
+    app.expand_selected();
+    assert_eq!(app.focus, Focus::Detail);
+
+    app.move_down();
+    app.move_down();
+    assert_eq!(app.detail_scroll, 2);
+    app.move_up();
+    assert_eq!(app.detail_scroll, 1);
+
+    app.collapse_selected();
+    assert_eq!(app.focus, Focus::Tree);
+}
+
+#[test]
+fn deep_gate_sections_are_renderable() {
+    let review = GateReview {
+        summary: "核心逻辑总体可行。".into(),
+        sections: vec![GateSection {
+            title: "错误与异常路径".into(),
+            conclusion: "需要验证失败路径。".into(),
+            evidence: vec!["crates/runtime/src/lib.rs 修改了错误分支。".into()],
+        }],
+        missing_evidence: vec!["缺少失败路径测试。".into()],
+        ..GateReview::default()
+    };
+
+    let text = review.detailed_text_cn();
+    assert!(text.contains("错误与异常路径"));
+    assert!(text.contains("crates/runtime/src/lib.rs"));
+    assert!(text.contains("缺少失败路径测试"));
 }
 
 #[test]
