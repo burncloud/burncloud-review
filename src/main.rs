@@ -38,7 +38,7 @@ use tokio::task::JoinHandle;
 use crate::{
     github::GitHubClient,
     local_ci::{LocalCiConfig, LocalCiEvent, LocalCiExecution},
-    models::{AiReviewReport, CommitStatus},
+    models::{AiReviewReport, CommitStatus, GateStatus},
     reviewer::{ReviewBackend, ReviewBackendOptions},
 };
 
@@ -192,7 +192,10 @@ async fn application_loop(
             .await
             .with_context(|| format!("load {repository} PR #{number}"))?;
         let mut app = App::new(data);
-        let active_ci = start_local_ci(&mut app, local_ci);
+        app.status = format!(
+            "本地 CI 尚未运行。按 T 使用 {} 创建隔离 worktree 并执行真实 build/test。",
+            local_ci.repo.display()
+        );
 
         match review_event_loop(
             terminal,
@@ -201,7 +204,7 @@ async fn application_loop(
             reviewer,
             &reviewer_summary,
             local_ci,
-            active_ci,
+            None,
         )
         .await?
         {
@@ -352,8 +355,9 @@ async fn review_event_loop(
                 cancel_local_ci(&active_ci);
                 app.status = "正在取消本地 CI...".into();
             }
-            KeyCode::Char('t') | KeyCode::Char('T') if !app.show_help => {
-                cancel_local_ci(&active_ci);
+            KeyCode::Char('t') | KeyCode::Char('T')
+                if !app.show_help && active_ci.is_none() =>
+            {
                 active_ci = start_local_ci(app, local_ci);
             }
             KeyCode::Char('a') | KeyCode::Char('A') if !app.show_help && !app.busy => {
@@ -383,8 +387,12 @@ async fn review_event_loop(
                 match github.load_pull_request(&repository, number).await {
                     Ok(data) => {
                         cancel_local_ci(&active_ci);
+                        active_ci = None;
                         app.replace_data(data);
-                        active_ci = start_local_ci(app, local_ci);
+                        app.status = format!(
+                            "PR 已刷新。本地 CI 尚未运行；按 T 使用 {} 重新验证。",
+                            local_ci.repo.display()
+                        );
                     }
                     Err(error) => {
                         app.status = format!("刷新失败: {error:#}");
@@ -398,7 +406,7 @@ async fn review_event_loop(
 }
 
 fn start_local_ci(app: &mut App, config: &LocalCiConfig) -> Option<ActiveLocalCi> {
-    app.data.ci.state = "running".into();
+    app.data.ci.state = "pending".into();
     app.data.ci.statuses.clear();
     app.status = format!(
         "本地 CI 已启动：使用 {} 创建 PR worktree 并执行真实 build/test",
@@ -454,6 +462,9 @@ fn poll_local_ci(app: &mut App, active_ci: &mut Option<ActiveLocalCi>) {
                 LocalCiEvent::StepFinished(status) => upsert_ci_status(app, status),
                 LocalCiEvent::Finished { success } => {
                     app.data.ci.state = if success { "success" } else { "failure" }.into();
+                    if !success {
+                        hard_fail_evidence(app);
+                    }
                     app.status = if success {
                         "本地 CI 完成：format / build / test / clippy 全部通过。".into()
                     } else {
@@ -475,6 +486,7 @@ fn poll_local_ci(app: &mut App, active_ci: &mut Option<ActiveLocalCi>) {
                             output: None,
                         },
                     );
+                    hard_fail_evidence(app);
                     app.status = "本地 CI 无法完成；请展开证据关卡查看原因。".into();
                     finished = true;
                 }
@@ -483,6 +495,12 @@ fn poll_local_ci(app: &mut App, active_ci: &mut Option<ActiveLocalCi>) {
     }
     if finished {
         *active_ci = None;
+    }
+}
+
+fn hard_fail_evidence(app: &mut App) {
+    if let Some(report) = app.report.as_mut() {
+        report.gates.evidence.status = GateStatus::Fail;
     }
 }
 
