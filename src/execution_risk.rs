@@ -1,4 +1,38 @@
-use crate::models::{ChangedFile, ExecutionRisk, SandboxKind};
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::models::ChangedFile;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum ExecutionRisk {
+    Low,
+    Medium,
+    High,
+    Block,
+}
+
+impl fmt::Display for ExecutionRisk {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SandboxKind {
+    Host,
+    Container,
+    DisposableVm,
+    None,
+}
+
+impl fmt::Display for SandboxKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct StaticExecutionAssessment {
