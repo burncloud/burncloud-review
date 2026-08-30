@@ -37,7 +37,11 @@ impl AiClient {
     }
 
     pub fn endpoint_summary(&self) -> String {
-        let auth = if self.api_key.is_some() { "auth" } else { "no-auth" };
+        let auth = if self.api_key.is_some() {
+            "auth"
+        } else {
+            "no-auth"
+        };
         format!("{} · {} · {}", self.model, self.base_url, auth)
     }
 
