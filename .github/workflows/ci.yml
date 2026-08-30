@@ -14,11 +14,11 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        run: cargo fmt --all -- --check
       - name: Check
         run: cargo check --all-targets
       - name: Test
         run: cargo test --all-targets
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      - name: Format
+        run: cargo fmt --all -- --check
