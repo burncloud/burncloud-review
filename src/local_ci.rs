@@ -451,7 +451,7 @@ impl CommandLogs {
             .duration_since(UNIX_EPOCH)
             .context("system time before unix epoch")?
             .as_nanos();
-        let safe = context.replace('/', "-").replace('\\', "-");
+        let safe = context.replace(['/', '\\'], "-");
         let dir = std::env::temp_dir().join("burncloud-review").join("logs");
         fs::create_dir_all(&dir).context("create local CI log directory")?;
         Ok(Self {
