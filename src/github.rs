@@ -1,9 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 
-use crate::models::{
-    ChangedFile, CombinedStatus, PullRequest, PullRequestData, RecentPullRequest,
-};
+use crate::models::{ChangedFile, CombinedStatus, PullRequest, PullRequestData, RecentPullRequest};
 
 #[derive(Clone)]
 pub struct GitHubClient {
