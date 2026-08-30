@@ -19,10 +19,8 @@ pub fn draw(frame: &mut Frame, app: &App, ai_endpoint: &str) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Length(1),
+            Constraint::Length(5),
             Constraint::Min(8),
-            Constraint::Length(1),
             Constraint::Length(2),
         ])
         .split(area);
@@ -31,15 +29,11 @@ pub fn draw(frame: &mut Frame, app: &App, ai_endpoint: &str) {
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(44),
-            Constraint::Length(1),
-            Constraint::Percentage(56),
-        ])
-        .split(vertical[2]);
+        .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
+        .split(vertical[1]);
     draw_tree(frame, app, body[0]);
-    draw_detail(frame, app, body[2]);
-    draw_footer(frame, app, vertical[4]);
+    draw_detail(frame, app, body[1]);
+    draw_footer(frame, app, vertical[2]);
 
     if app.show_help {
         draw_help(frame);
@@ -56,10 +50,12 @@ fn draw_header(frame: &mut Frame, app: &App, ai_endpoint: &str, area: Rect) {
         Span::styled("AI: ", Style::default().add_modifier(Modifier::BOLD)),
         Span::raw(ai_endpoint),
     ]);
-    let widget = Paragraph::new(text)
-        .block(Block::default().title(title).borders(Borders::ALL))
-        .alignment(Alignment::Left);
-    frame.render_widget(widget, area);
+    let block = Block::default().title(title).borders(Borders::ALL);
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(text).alignment(Alignment::Left),
+        padded_panel_inner(area),
+    );
 }
 
 fn draw_tree(frame: &mut Frame, app: &App, area: Rect) {
@@ -87,13 +83,13 @@ fn draw_tree(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         Style::default()
     };
+    let block = Block::default()
+        .title(" Review Tree ")
+        .borders(Borders::ALL)
+        .border_style(border);
+    frame.render_widget(block, area);
+
     let list = List::new(items)
-        .block(
-            Block::default()
-                .title(" Review Tree ")
-                .borders(Borders::ALL)
-                .border_style(border),
-        )
         .highlight_style(
             Style::default()
                 .fg(Color::Yellow)
@@ -103,7 +99,7 @@ fn draw_tree(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut state = ListState::default();
     state.select(Some(app.selected));
-    frame.render_stateful_widget(list, area, &mut state);
+    frame.render_stateful_widget(list, padded_panel_inner(area), &mut state);
 }
 
 fn display_entry_label(app: &App, entry: &TreeEntry) -> String {
@@ -138,16 +134,16 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         Style::default()
     };
+    let block = Block::default()
+        .title(" Evidence / Detail ")
+        .borders(Borders::ALL)
+        .border_style(border);
+    frame.render_widget(block, area);
+
     let detail = Paragraph::new(display_detail_text(app))
-        .block(
-            Block::default()
-                .title(" Evidence / Detail ")
-                .borders(Borders::ALL)
-                .border_style(border),
-        )
         .wrap(Wrap { trim: false })
         .scroll((app.detail_scroll, 0));
-    frame.render_widget(detail, area);
+    frame.render_widget(detail, padded_panel_inner(area));
 }
 
 fn display_detail_text(app: &App) -> String {
@@ -261,15 +257,22 @@ Suggested reviewer flow:
 PR → Risk → Gates → Components → Files → Hunks → Lines → Findings
 
 AI findings are evidence, not authority. Missing patch/context must remain "missing evidence" rather than becoming a guessed defect."#;
-    let popup = Paragraph::new(help)
-        .block(
-            Block::default()
-                .title(" Help ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow)),
-        )
-        .wrap(Wrap { trim: false });
-    frame.render_widget(popup, area);
+    let block = Block::default()
+        .title(" Help ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow));
+    frame.render_widget(block, area);
+    frame.render_widget(
+        Paragraph::new(help).wrap(Wrap { trim: false }),
+        padded_panel_inner(area),
+    );
+}
+
+fn padded_panel_inner(area: Rect) -> Rect {
+    area.inner(Margin {
+        horizontal: 2,
+        vertical: 2,
+    })
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
