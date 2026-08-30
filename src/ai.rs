@@ -141,6 +141,7 @@ NIT = style or low-value polish.
 
 Do not invent source facts. If evidence is missing, say that evidence is missing instead of claiming a bug.
 Only report a file/line when the supplied patch supports it.
+Write every reviewer-facing natural-language field in Simplified Chinese, including summary, merge_recommendation, gate summaries/items, component impact/reason, and finding title/explanation/suggestion. Keep enum values, category values, code identifiers, paths, function names, and status tokens unchanged.
 Return exactly one JSON object and no Markdown fences, using this shape:
 {
   "summary": "...",
