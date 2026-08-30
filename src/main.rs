@@ -384,8 +384,7 @@ async fn review_event_loop(
                         }
                     } else {
                         app.status =
-                            "本地 CI 后的最终 AI 审查完成。可以逐层查看关卡、文件和证据。"
-                                .into();
+                            "本地 CI 后的最终 AI 审查完成。可以逐层查看关卡、文件和证据。".into();
                     }
                 }
                 Ok(Err(error)) => {
@@ -453,9 +452,8 @@ async fn review_event_loop(
                         active_ci = start_local_ci(app, local_ci);
                     }
                     LocalExecutionDecision::Block(reason) => {
-                        app.status = format!(
-                            "本地 CI 被安全策略阻止：{reason}。T 不能绕过 AI 安全预检。"
-                        );
+                        app.status =
+                            format!("本地 CI 被安全策略阻止：{reason}。T 不能绕过 AI 安全预检。");
                     }
                 }
             }
