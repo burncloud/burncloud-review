@@ -25,7 +25,8 @@ impl ReviewBackend {
     pub fn from_options(options: ReviewBackendOptions) -> Result<Self> {
         match options.backend.to_ascii_lowercase().as_str() {
             "auto" => {
-                match CodexClient::discover(options.codex_bin.clone(), options.codex_model.clone()) {
+                match CodexClient::discover(options.codex_bin.clone(), options.codex_model.clone())
+                {
                     Ok(codex) => Ok(Self::Codex(codex)),
                     Err(_) => Ok(Self::Http(AiClient::new(
                         options.http_base_url,
