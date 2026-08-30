@@ -97,3 +97,51 @@ fn max_risk(a: RiskLevel, b: RiskLevel) -> RiskLevel {
         _ => R0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file(path: &str) -> ChangedFile {
+        ChangedFile {
+            filename: path.into(),
+            status: "modified".into(),
+            additions: 1,
+            deletions: 1,
+            changes: 2,
+            patch: None,
+        }
+    }
+
+    #[test]
+    fn docs_only_is_r0() {
+        assert_eq!(classify_risk(&[file("docs/node.md")]), RiskLevel::R0);
+    }
+
+    #[test]
+    fn runtime_is_r2() {
+        assert_eq!(
+            classify_risk(&[file("crates/runtime/src/lib.rs")]),
+            RiskLevel::R2
+        );
+    }
+
+    #[test]
+    fn network_security_is_r3() {
+        assert_eq!(
+            classify_risk(&[file("crates/network/src/auth.rs")]),
+            RiskLevel::R3
+        );
+    }
+
+    #[test]
+    fn ledger_always_escalates_to_r4() {
+        assert_eq!(
+            classify_risk(&[
+                file("docs/readme.md"),
+                file("crates/ledger/src/settlement.rs"),
+            ]),
+            RiskLevel::R4
+        );
+    }
+}
