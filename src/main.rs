@@ -37,7 +37,11 @@ struct Args {
     github_token: Option<String>,
 
     /// OpenAI-compatible base URL. BurnCloud Node is the default local AI endpoint.
-    #[arg(long, env = "BCR_AI_BASE_URL", default_value = "http://localhost:3000/v1")]
+    #[arg(
+        long,
+        env = "BCR_AI_BASE_URL",
+        default_value = "http://localhost:3000/v1"
+    )]
     ai_base_url: String,
 
     /// Optional bearer token for the AI endpoint.
