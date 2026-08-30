@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 
-use crate::models::{ChangedFile, CombinedStatus, PullRequest, PullRequestData};
+use crate::models::{
+    ChangedFile, CombinedStatus, PullRequest, PullRequestData, RecentPullRequest,
+};
 
 #[derive(Clone)]
 pub struct GitHubClient {
@@ -27,6 +29,45 @@ impl GitHubClient {
             .build()
             .context("build GitHub HTTP client")?;
         Ok(Self { http })
+    }
+
+    pub async fn load_recent_pull_requests(
+        &self,
+        repository: &str,
+        limit: usize,
+    ) -> Result<Vec<RecentPullRequest>> {
+        let limit = limit.clamp(1, 100);
+        let mut prs = self.load_pr_list(repository, "open", limit).await?;
+
+        if prs.len() < limit {
+            let remaining = limit - prs.len();
+            let mut closed = self.load_pr_list(repository, "closed", remaining).await?;
+            prs.append(&mut closed);
+        }
+
+        prs.truncate(limit);
+        Ok(prs)
+    }
+
+    async fn load_pr_list(
+        &self,
+        repository: &str,
+        state: &str,
+        limit: usize,
+    ) -> Result<Vec<RecentPullRequest>> {
+        let url = format!(
+            "https://api.github.com/repos/{repository}/pulls?state={state}&sort=updated&direction=desc&per_page={limit}"
+        );
+        self.http
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("request recent {state} pull requests"))?
+            .error_for_status()
+            .with_context(|| format!("GitHub rejected recent {state} pull request request"))?
+            .json()
+            .await
+            .with_context(|| format!("decode recent {state} pull requests"))
     }
 
     pub async fn load_pull_request(
