@@ -195,6 +195,7 @@ fn build_codex_prompt(data: &PullRequestData) -> String {
          Risk policy: R0 docs; R1 UI/tooling; R2 runtime/router/model/process/hardware; R3 network/auth/security/identity; R4 billing/settlement/clearing/wallet/ledger.\n\
          Severity: BLOCKER, MAJOR, MINOR, NIT.\n\
          Only anchor findings to file/line when the supplied patch supports it.\n\
+         Write every reviewer-facing natural-language field in Simplified Chinese, including summary, merge_recommendation, gate summaries/items, component impact/reason, and finding title/explanation/suggestion. Keep enum values, category values, code identifiers, paths, function names, and status tokens unchanged.\n\
          Return only the JSON object required by the provided output schema.\n\n",
     );
 
