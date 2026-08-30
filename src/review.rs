@@ -107,7 +107,7 @@ fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
 }
 
-fn max_risk(a: RiskLevel, b: RiskLevel) -> RiskLevel {
+pub fn max_risk(a: RiskLevel, b: RiskLevel) -> RiskLevel {
     use RiskLevel::*;
     match (a, b) {
         (R4, _) | (_, R4) => R4,
@@ -163,5 +163,11 @@ mod tests {
             ]),
             RiskLevel::R4
         );
+    }
+
+    #[test]
+    fn model_review_cannot_lower_static_risk() {
+        assert_eq!(max_risk(RiskLevel::R4, RiskLevel::R1), RiskLevel::R4);
+        assert_eq!(max_risk(RiskLevel::R2, RiskLevel::R3), RiskLevel::R3);
     }
 }
