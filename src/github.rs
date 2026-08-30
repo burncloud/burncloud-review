@@ -1,0 +1,106 @@
+use anyhow::{Context, Result};
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
+
+use crate::models::{ChangedFile, CombinedStatus, PullRequest, PullRequestData};
+
+#[derive(Clone)]
+pub struct GitHubClient {
+    http: reqwest::Client,
+}
+
+impl GitHubClient {
+    pub fn new(token: Option<&str>) -> Result<Self> {
+        let mut headers = HeaderMap::new();
+        headers.insert(USER_AGENT, HeaderValue::from_static("burncloud-review"));
+        headers.insert(
+            ACCEPT,
+            HeaderValue::from_static("application/vnd.github+json"),
+        );
+        if let Some(token) = token.filter(|v| !v.trim().is_empty()) {
+            let value = HeaderValue::from_str(&format!("Bearer {token}"))
+                .context("invalid GitHub token header")?;
+            headers.insert(AUTHORIZATION, value);
+        }
+
+        let http = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .context("build GitHub HTTP client")?;
+        Ok(Self { http })
+    }
+
+    pub async fn load_pull_request(
+        &self,
+        repository: &str,
+        number: u64,
+    ) -> Result<PullRequestData> {
+        let pr_url = format!("https://api.github.com/repos/{repository}/pulls/{number}");
+        let pr: PullRequest = self
+            .http
+            .get(&pr_url)
+            .send()
+            .await
+            .context("request pull request metadata")?
+            .error_for_status()
+            .context("GitHub rejected pull request metadata request")?
+            .json()
+            .await
+            .context("decode pull request metadata")?;
+
+        let files = self.load_files(repository, number).await?;
+        let ci = self
+            .load_status(repository, &pr.head.sha)
+            .await
+            .unwrap_or_else(|_| CombinedStatus {
+                state: "unknown".into(),
+                statuses: Vec::new(),
+            });
+
+        Ok(PullRequestData {
+            repository: repository.to_string(),
+            pr,
+            files,
+            ci,
+        })
+    }
+
+    async fn load_files(&self, repository: &str, number: u64) -> Result<Vec<ChangedFile>> {
+        let mut files = Vec::new();
+        for page in 1..=50 {
+            let url = format!(
+                "https://api.github.com/repos/{repository}/pulls/{number}/files?per_page=100&page={page}"
+            );
+            let batch: Vec<ChangedFile> = self
+                .http
+                .get(&url)
+                .send()
+                .await
+                .with_context(|| format!("request changed files page {page}"))?
+                .error_for_status()
+                .context("GitHub rejected changed files request")?
+                .json()
+                .await
+                .context("decode changed files")?;
+            let len = batch.len();
+            files.extend(batch);
+            if len < 100 {
+                break;
+            }
+        }
+        Ok(files)
+    }
+
+    async fn load_status(&self, repository: &str, sha: &str) -> Result<CombinedStatus> {
+        let url = format!("https://api.github.com/repos/{repository}/commits/{sha}/status");
+        self.http
+            .get(url)
+            .send()
+            .await
+            .context("request commit status")?
+            .error_for_status()
+            .context("GitHub rejected commit status request")?
+            .json()
+            .await
+            .context("decode commit status")
+    }
+}
