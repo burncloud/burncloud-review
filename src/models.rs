@@ -80,6 +80,14 @@ pub struct CommitStatus {
     pub state: String,
     pub context: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub output: Option<String>,
 }
 
 #[derive(Debug, Clone)]
