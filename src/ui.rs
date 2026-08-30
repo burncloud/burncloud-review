@@ -1,32 +1,45 @@
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Frame,
 };
 
-use crate::app::{App, Focus};
+use crate::{
+    app::{App, Focus, NodeId, TreeEntry},
+    models::GateKind,
+};
 
 pub fn draw(frame: &mut Frame, app: &App, ai_endpoint: &str) {
+    let area = frame.area().inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
+            Constraint::Length(1),
             Constraint::Min(8),
+            Constraint::Length(1),
             Constraint::Length(2),
         ])
-        .split(frame.area());
+        .split(area);
 
     draw_header(frame, app, ai_endpoint, vertical[0]);
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(44), Constraint::Percentage(56)])
-        .split(vertical[1]);
+        .constraints([
+            Constraint::Percentage(44),
+            Constraint::Length(1),
+            Constraint::Percentage(56),
+        ])
+        .split(vertical[2]);
     draw_tree(frame, app, body[0]);
-    draw_detail(frame, app, body[1]);
-    draw_footer(frame, app, vertical[2]);
+    draw_detail(frame, app, body[2]);
+    draw_footer(frame, app, vertical[4]);
 
     if app.show_help {
         draw_help(frame);
@@ -64,7 +77,8 @@ fn draw_tree(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 "• "
             };
-            ListItem::new(Line::from(format!("{indent}{marker}{}", entry.label)))
+            let label = display_entry_label(app, entry);
+            ListItem::new(Line::from(format!("{indent}{marker}{label}")))
         })
         .collect();
 
@@ -92,13 +106,39 @@ fn draw_tree(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+fn display_entry_label(app: &App, entry: &TreeEntry) -> String {
+    let NodeId::Gate(kind) = entry.id else {
+        return entry.label.clone();
+    };
+    if app.report.is_some() {
+        return entry.label.clone();
+    }
+    format!("[{}] {}", pre_review_status(app, kind), kind.title())
+}
+
+fn pre_review_status(app: &App, kind: GateKind) -> &'static str {
+    if kind == GateKind::Evidence {
+        return match app.data.ci.state.to_ascii_lowercase().as_str() {
+            "success" => "CI PASS",
+            "failure" | "error" => "CI FAIL",
+            "pending" | "expected" => "CI PENDING",
+            _ => "CI UNKNOWN",
+        };
+    }
+    if app.busy {
+        "RUNNING"
+    } else {
+        "NOT RUN"
+    }
+}
+
 fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
     let border = if app.focus == Focus::Detail {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default()
     };
-    let detail = Paragraph::new(app.detail_text())
+    let detail = Paragraph::new(display_detail_text(app))
         .block(
             Block::default()
                 .title(" Evidence / Detail ")
@@ -108,6 +148,75 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: false })
         .scroll((app.detail_scroll, 0));
     frame.render_widget(detail, area);
+}
+
+fn display_detail_text(app: &App) -> String {
+    if app.report.is_some() {
+        return app.detail_text();
+    }
+
+    match app.selected_id() {
+        NodeId::Gates => {
+            let mut text = String::from(
+                "REVIEW GATES\n\nThe four review gates do not run automatically. Press 'a' to start the independent Codex/AI review. Evidence shows GitHub CI separately.\n\n",
+            );
+            for kind in GateKind::ALL {
+                text.push_str(&format!(
+                    "[{}] {}\n",
+                    pre_review_status(app, kind),
+                    kind.title()
+                ));
+            }
+            text.push_str("\nAfter the review finishes, statuses become PASS / WARN / FAIL.");
+            text
+        }
+        NodeId::Gate(kind) => pre_review_gate_detail(app, kind),
+        _ => app.detail_text(),
+    }
+}
+
+fn pre_review_gate_detail(app: &App, kind: GateKind) -> String {
+    let status = pre_review_status(app, kind);
+    let explanation = match kind {
+        GateKind::Scope => {
+            "Checks whether the implementation stayed inside the requested change boundary."
+        }
+        GateKind::Code => {
+            "Checks correctness, error paths, concurrency, cleanup, security and regressions."
+        }
+        GateKind::Behavior => {
+            "Checks which runtime or user-visible execution paths changed, including failures."
+        }
+        GateKind::Architecture => {
+            "Checks component responsibilities, dependency direction and architecture boundaries."
+        }
+        GateKind::Evidence => {
+            "Shows deterministic GitHub CI evidence independently from the model review."
+        }
+    };
+
+    let mut text = format!(
+        "{} GATE\nStatus: {}\n\n{}",
+        kind.title().to_uppercase(),
+        status,
+        explanation
+    );
+    if kind == GateKind::Evidence {
+        text.push_str(&format!("\n\nCombined CI: {}", app.data.ci.state));
+        for ci in &app.data.ci.statuses {
+            text.push_str(&format!(
+                "\n• {}: {} — {}",
+                ci.context,
+                ci.state,
+                ci.description.as_deref().unwrap_or("")
+            ));
+        }
+    } else if app.busy {
+        text.push_str("\n\nIndependent review is currently running.");
+    } else {
+        text.push_str("\n\nNot reviewed yet. Press 'a' to run the independent review.");
+    }
+    text
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
@@ -141,6 +250,12 @@ R            Reload PR metadata, files and CI from GitHub
 Esc          Return to the recent PR picker
 ?            Toggle this help
 Q            Quit
+
+Gate status before review:
+NOT RUN      Independent review has not been started
+RUNNING      Independent review is currently running
+CI PENDING   GitHub CI is actually pending
+PASS/WARN/FAIL are shown after review completes.
 
 Suggested reviewer flow:
 PR → Risk → Gates → Components → Files → Hunks → Lines → Findings

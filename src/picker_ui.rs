@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Margin},
     style::{Color, Modifier, Style},
     text::Line,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
@@ -9,14 +9,20 @@ use ratatui::{
 use crate::picker::PrPicker;
 
 pub fn draw(frame: &mut Frame, picker: &PrPicker, backend: &str) {
+    let area = frame.area().inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
+            Constraint::Length(1),
             Constraint::Min(8),
+            Constraint::Length(1),
             Constraint::Length(2),
         ])
-        .split(frame.area());
+        .split(area);
 
     let header = Paragraph::new(format!("Reviewer: {backend}")).block(
         Block::default()
@@ -27,8 +33,12 @@ pub fn draw(frame: &mut Frame, picker: &PrPicker, backend: &str) {
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
-        .split(vertical[1]);
+        .constraints([
+            Constraint::Percentage(52),
+            Constraint::Length(1),
+            Constraint::Percentage(48),
+        ])
+        .split(vertical[2]);
 
     let items: Vec<ListItem> = picker
         .prs
@@ -70,7 +80,7 @@ pub fn draw(frame: &mut Frame, picker: &PrPicker, backend: &str) {
                 .borders(Borders::ALL),
         )
         .wrap(Wrap { trim: false });
-    frame.render_widget(detail, body[1]);
+    frame.render_widget(detail, body[2]);
 
     let footer = Paragraph::new(format!(
         "{}  |  ↑↓ select  Enter review  r refresh  q quit",
@@ -78,16 +88,20 @@ pub fn draw(frame: &mut Frame, picker: &PrPicker, backend: &str) {
     ))
     .style(Style::default().fg(Color::DarkGray))
     .wrap(Wrap { trim: true });
-    frame.render_widget(footer, vertical[2]);
+    frame.render_widget(footer, vertical[4]);
 }
 
 pub fn draw_loading(frame: &mut Frame, repository: &str, backend: &str, message: &str) {
+    let area = frame.area().inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     let block = Block::default()
         .title(format!(" BurnCloud Review · {repository} "))
         .borders(Borders::ALL);
     let text = format!("{message}\n\nReviewer: {backend}");
     frame.render_widget(
         Paragraph::new(text).block(block).wrap(Wrap { trim: true }),
-        frame.area(),
+        area,
     );
 }
