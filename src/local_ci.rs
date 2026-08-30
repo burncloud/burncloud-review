@@ -59,7 +59,8 @@ impl LocalCiConfig {
         let task_cancel = Arc::clone(&cancel);
         let config = self.clone();
         thread::spawn(move || {
-            if let Err(error) = run_local_ci(&config, pr_number, &expected_sha, &files, &tx, &task_cancel)
+            if let Err(error) =
+                run_local_ci(&config, pr_number, &expected_sha, &files, &tx, &task_cancel)
             {
                 let _ = tx.send(LocalCiEvent::Failed {
                     message: format!("{error:#}"),
@@ -154,8 +155,7 @@ fn run_local_ci(
     fs::create_dir_all(&target_dir).context("create shared Cargo target directory")?;
 
     let mut all_success = true;
-    let steps = build_steps(&packages);
-    for step in steps {
+    for step in build_steps(&packages) {
         if cancel.load(Ordering::Relaxed) {
             return Err(anyhow!("本地 CI 已取消"));
         }
@@ -168,9 +168,6 @@ fn run_local_ci(
             all_success = false;
         }
         let _ = tx.send(LocalCiEvent::StepFinished(result));
-        if !all_success {
-            break;
-        }
     }
 
     let _ = tx.send(LocalCiEvent::Finished {
@@ -324,7 +321,8 @@ fn affected_packages(worktree: &Path, files: &[ChangedFile]) -> Result<Vec<Strin
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let metadata: Value = serde_json::from_slice(&output.stdout).context("decode cargo metadata")?;
+    let metadata: Value =
+        serde_json::from_slice(&output.stdout).context("decode cargo metadata")?;
     let packages = metadata["packages"]
         .as_array()
         .ok_or_else(|| anyhow!("cargo metadata missing packages"))?;
@@ -389,7 +387,10 @@ fn affected_packages(worktree: &Path, files: &[ChangedFile]) -> Result<Vec<Strin
     let mut reverse: HashMap<String, Vec<String>> = HashMap::new();
     for pkg in &infos {
         for dep in &pkg.deps {
-            reverse.entry(dep.clone()).or_default().push(pkg.name.clone());
+            reverse
+                .entry(dep.clone())
+                .or_default()
+                .push(pkg.name.clone());
         }
     }
     let mut queue: VecDeque<String> = affected.iter().cloned().collect();
@@ -412,13 +413,11 @@ fn worktree_path(pr_number: u64) -> PathBuf {
     std::env::temp_dir()
         .join("burncloud-review")
         .join("worktrees")
-        .join(format!("pr-{pr_number}"))
+        .join(format!("pr-{pr_number}-{}", std::process::id()))
 }
 
 fn run_simple(command: &mut Command, label: &str) -> Result<()> {
-    let output = command
-        .output()
-        .with_context(|| format!("run {label}"))?;
+    let output = command.output().with_context(|| format!("run {label}"))?;
     if output.status.success() {
         Ok(())
     } else {
