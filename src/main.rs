@@ -355,9 +355,7 @@ async fn review_event_loop(
                 cancel_local_ci(&active_ci);
                 app.status = "正在取消本地 CI...".into();
             }
-            KeyCode::Char('t') | KeyCode::Char('T')
-                if !app.show_help && active_ci.is_none() =>
-            {
+            KeyCode::Char('t') | KeyCode::Char('T') if !app.show_help && active_ci.is_none() => {
                 active_ci = start_local_ci(app, local_ci);
             }
             KeyCode::Char('a') | KeyCode::Char('A') if !app.show_help && !app.busy => {
