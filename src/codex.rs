@@ -2,8 +2,13 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
+    process::{Child, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -17,13 +22,22 @@ use crate::{
 pub struct CodexClient {
     command: String,
     model: Option<String>,
+    timeout: Duration,
 }
 
 impl CodexClient {
-    pub fn discover(explicit_command: Option<String>, model: Option<String>) -> Result<Self> {
+    pub fn discover(
+        explicit_command: Option<String>,
+        model: Option<String>,
+        timeout: Duration,
+    ) -> Result<Self> {
         if let Some(command) = explicit_command {
             verify_codex(&command)?;
-            return Ok(Self { command, model });
+            return Ok(Self {
+                command,
+                model,
+                timeout,
+            });
         }
 
         for candidate in codex_candidates() {
@@ -31,6 +45,7 @@ impl CodexClient {
                 return Ok(Self {
                     command: candidate.to_string(),
                     model,
+                    timeout,
                 });
             }
         }
@@ -47,17 +62,30 @@ impl CodexClient {
         }
     }
 
-    pub async fn review(&self, data: &PullRequestData) -> Result<AiReviewReport> {
+    pub fn timeout_secs(&self) -> u64 {
+        self.timeout.as_secs()
+    }
+
+    pub async fn review(
+        &self,
+        data: &PullRequestData,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<AiReviewReport> {
         let client = self.clone();
         let data = data.clone();
-        tokio::task::spawn_blocking(move || client.review_blocking(&data))
+        tokio::task::spawn_blocking(move || client.review_blocking(&data, &cancel))
             .await
             .context("join local Codex review task")?
     }
 
-    fn review_blocking(&self, data: &PullRequestData) -> Result<AiReviewReport> {
+    fn review_blocking(
+        &self,
+        data: &PullRequestData,
+        cancel: &AtomicBool,
+    ) -> Result<AiReviewReport> {
         let temp = CodexTempFiles::new()?;
         fs::write(&temp.schema, REVIEW_OUTPUT_SCHEMA).context("write Codex output schema")?;
+        let stderr_file = fs::File::create(&temp.stderr).context("create Codex stderr file")?;
 
         let prompt = build_codex_prompt(data);
         let mut command = Command::new(&self.command);
@@ -83,7 +111,7 @@ impl CodexClient {
             .current_dir(std::env::temp_dir())
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::from(stderr_file));
 
         let mut child = command.spawn().with_context(|| {
             format!(
@@ -100,14 +128,31 @@ impl CodexClient {
             .context("send review evidence to Codex")?;
         drop(child.stdin.take());
 
-        let output = child
-            .wait_with_output()
-            .context("wait for local Codex review")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        let started = Instant::now();
+        let status = loop {
+            if cancel.load(Ordering::Relaxed) {
+                terminate_child(&mut child);
+                return Err(anyhow!("本地 Codex 审查已取消"));
+            }
+            if started.elapsed() >= self.timeout {
+                terminate_child(&mut child);
+                return Err(anyhow!(
+                    "本地 Codex 审查超过 {} 秒，已终止子进程",
+                    self.timeout.as_secs()
+                ));
+            }
+
+            match child.try_wait().context("poll local Codex review")? {
+                Some(status) => break status,
+                None => thread::sleep(Duration::from_millis(100)),
+            }
+        };
+
+        let stderr = fs::read_to_string(&temp.stderr).unwrap_or_default();
+        if !status.success() {
             return Err(anyhow!(
                 "local Codex review exited with {}: {}",
-                output.status,
+                status,
                 stderr.trim()
             ));
         }
@@ -124,6 +169,11 @@ impl CodexClient {
             clamp_evidence_status(report.gates.evidence.status, &data.ci.state);
         Ok(report)
     }
+}
+
+fn terminate_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn verify_codex(command: &str) -> Result<()> {
@@ -155,6 +205,7 @@ fn codex_candidates() -> &'static [&'static str] {
 struct CodexTempFiles {
     schema: PathBuf,
     output: PathBuf,
+    stderr: PathBuf,
 }
 
 impl CodexTempFiles {
@@ -168,6 +219,7 @@ impl CodexTempFiles {
         Ok(Self {
             schema: dir.join(format!("{prefix}-schema.json")),
             output: dir.join(format!("{prefix}-result.json")),
+            stderr: dir.join(format!("{prefix}-stderr.log")),
         })
     }
 }
@@ -176,6 +228,7 @@ impl Drop for CodexTempFiles {
     fn drop(&mut self) {
         remove_if_exists(&self.schema);
         remove_if_exists(&self.output);
+        remove_if_exists(&self.stderr);
     }
 }
 
