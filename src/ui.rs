@@ -126,10 +126,11 @@ fn display_entry_label(app: &App, entry: &TreeEntry) -> String {
 fn pre_review_status(app: &App, kind: GateKind) -> &'static str {
     if kind == GateKind::Evidence {
         return match app.data.ci.state.to_ascii_lowercase().as_str() {
-            "success" => "CI通过",
-            "failure" | "error" => "CI失败",
-            "pending" | "expected" => "CI等待",
-            _ => "CI未知",
+            "success" => "本地CI通过",
+            "failure" | "error" => "本地CI失败",
+            "pending" | "expected" => "本地CI运行中",
+            "not_run" => "本地CI未运行",
+            _ => "本地CI未知",
         };
     }
     if app.busy {
@@ -197,7 +198,7 @@ fn display_detail_text(app: &App) -> String {
 fn root_detail_cn(app: &App) -> String {
     let pr = &app.data.pr;
     let mut text = format!(
-        "PR #{} — {}\n\n仓库: {}\n作者: {}\n状态: {}{}\n目标分支: {}\n来源分支: {} @ {}\n风险等级: {}\nCI: {}\n改动: +{} -{}，共 {} 个文件\n\n{}",
+        "PR #{} — {}\n\n仓库: {}\n作者: {}\n状态: {}{}\n目标分支: {}\n来源分支: {} @ {}\n风险等级: {}\n本地 CI: {}\n改动: +{} -{}，共 {} 个文件\n\n{}",
         pr.number,
         pr.title,
         app.data.repository,
@@ -261,15 +262,7 @@ fn gate_detail_cn(app: &App, kind: GateKind) -> String {
         }
     }
     if kind == GateKind::Evidence {
-        text.push_str(&format!("\n\n综合 CI: {}\n", app.data.ci.state));
-        for ci in &app.data.ci.statuses {
-            text.push_str(&format!(
-                "• {}: {} — {}\n",
-                ci.context,
-                ci.state,
-                ci.description.as_deref().unwrap_or("")
-            ));
-        }
+        append_local_ci_evidence(app, &mut text);
     }
     text
 }
@@ -281,7 +274,9 @@ fn pre_review_gate_detail_cn(app: &App, kind: GateKind) -> String {
         GateKind::Code => "检查正确性、错误路径、并发、资源清理、安全性、性能和回归风险。",
         GateKind::Behavior => "检查哪些运行时路径或用户可见行为发生变化，包括失败时的行为。",
         GateKind::Architecture => "检查组件职责、依赖方向和架构边界是否被破坏。",
-        GateKind::Evidence => "独立展示 GitHub CI 等确定性证据，不依赖模型主观判断。",
+        GateKind::Evidence => {
+            "确定性证据来自本机隔离 worktree 中真实执行的 format / build / test / clippy；GitHub 只提供 PR 元数据和 Patch。"
+        }
     };
 
     let mut text = format!(
@@ -291,14 +286,9 @@ fn pre_review_gate_detail_cn(app: &App, kind: GateKind) -> String {
         explanation
     );
     if kind == GateKind::Evidence {
-        text.push_str(&format!("\n\n综合 CI: {}", app.data.ci.state));
-        for ci in &app.data.ci.statuses {
-            text.push_str(&format!(
-                "\n• {}: {} — {}",
-                ci.context,
-                ci.state,
-                ci.description.as_deref().unwrap_or("")
-            ));
+        append_local_ci_evidence(app, &mut text);
+        if app.data.ci.state == "not_run" {
+            text.push_str("\n\n按 T 后才会执行 PR 中的本地代码。浏览 PR 本身不会自动执行代码。");
         }
     } else if app.busy {
         text.push_str("\n\n独立审查正在运行。");
@@ -306,6 +296,22 @@ fn pre_review_gate_detail_cn(app: &App, kind: GateKind) -> String {
         text.push_str("\n\n尚未审查。按 A 启动独立审查。");
     }
     text
+}
+
+fn append_local_ci_evidence(app: &App, text: &mut String) {
+    text.push_str(&format!("\n\n本地 CI: {}", app.data.ci.state));
+    if app.data.ci.statuses.is_empty() {
+        text.push_str("\n• 尚无本地执行证据。");
+        return;
+    }
+    for ci in &app.data.ci.statuses {
+        text.push_str(&format!(
+            "\n\n• {}: {}\n{}",
+            ci.context,
+            ci.state,
+            ci.evidence_text()
+        ));
+    }
 }
 
 fn components_detail_cn(app: &App) -> String {
@@ -470,7 +476,7 @@ fn category_cn(category: &str) -> &str {
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let text = format!(
-        "{}  |  ↑↓ 移动  ←→ 层级  Enter 展开  Tab 切换  A AI审查  R 刷新  Esc PR列表  ? 帮助  Q 退出",
+        "{}  |  ↑↓ 移动  ←→ 层级  Enter 展开  Tab 切换  T 本地CI  X 取消CI  A AI审查  C 取消AI  R 刷新  Esc PR列表  ? 帮助  Q 退出",
         app.status
     );
     frame.render_widget(
@@ -494,20 +500,25 @@ fn draw_help(frame: &mut Frame) {
 Enter        展开 / 收起当前层
 Tab          切换焦点：审查树 ↔ 详情面板
 PgUp/PgDn   翻页滚动证据 / 详情
+T            使用 ../burncloud 创建隔离 worktree 并运行本地 CI
+X            取消当前本地 CI
 A            启动独立 AI / Codex 审查
-R            从 GitHub 重新加载 PR、文件和 CI
+C            取消当前 AI 审查
+R            重新加载 GitHub PR 元数据和 Patch；本地 CI 恢复未运行
 Esc          返回最近 PR 列表
 ?            显示 / 隐藏帮助
 Q            退出
 
-审查前状态：
-未审查       独立审查尚未启动
-审查中       独立审查正在运行
-CI等待       GitHub CI 确实仍在等待
-审查完成后显示：通过 / 警告 / 失败。
+本地 CI 状态：
+未运行       浏览 PR 不会自动执行 PR 代码；按 T 后才运行
+运行中       正在本机执行 format / build / test / clippy
+通过         本地命令真实返回成功退出码
+失败         至少一项本地命令失败，Evidence 不能被 AI 提升为通过
+
+GitHub 只用于读取 PR 身份、SHA、元数据和 Patch；编译与测试证据来自本机。
 
 建议审查路径：
-PR → 风险 → 关卡 → 组件 → 文件 → Hunk → 行 → AI发现
+PR → 风险 → 本地CI证据 → 关卡 → 组件 → 文件 → Hunk → 行 → AI发现
 
 AI 发现只是证据和建议，不是最终权威。缺少 Patch 或上下文时必须标记为证据不足，不能猜测代码事实。"#;
     let block = Block::default()
