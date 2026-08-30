@@ -229,6 +229,10 @@ async fn review_event_loop(
     reviewer_summary: &str,
 ) -> Result<ReviewExit> {
     loop {
+        if app.should_quit {
+            return Ok(ReviewExit::Quit);
+        }
+
         terminal.draw(|frame| ui::draw(frame, app, reviewer_summary))?;
 
         let Some(key) = read_key()? else {
@@ -236,9 +240,7 @@ async fn review_event_loop(
         };
 
         match key {
-            KeyCode::Char('q') | KeyCode::Char('Q') if !app.busy => {
-                return Ok(ReviewExit::Quit)
-            }
+            KeyCode::Char('q') | KeyCode::Char('Q') if !app.busy => app.should_quit = true,
             KeyCode::Esc if app.show_help => app.show_help = false,
             KeyCode::Esc if !app.busy => return Ok(ReviewExit::BackToPicker),
             KeyCode::Char('?') => app.show_help = !app.show_help,
