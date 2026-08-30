@@ -106,14 +106,7 @@ async fn run_terminal(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create Ratatui terminal")?;
 
-    let result = application_loop(
-        &mut terminal,
-        &repository,
-        initial_pr,
-        &github,
-        &reviewer,
-    )
-    .await;
+    let result = application_loop(&mut terminal, &repository, initial_pr, &github, &reviewer).await;
 
     disable_raw_mode().ok();
     execute!(
@@ -139,7 +132,8 @@ async fn application_loop(
     loop {
         let number = match next_pr.take() {
             Some(number) => number,
-            None => match pick_pull_request(terminal, repository, github, &reviewer_summary).await? {
+            None => match pick_pull_request(terminal, repository, github, &reviewer_summary).await?
+            {
                 Some(number) => number,
                 None => return Ok(()),
             },
