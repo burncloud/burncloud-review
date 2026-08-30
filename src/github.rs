@@ -29,7 +29,11 @@ impl GitHubClient {
         Ok(Self { http })
     }
 
-    pub async fn load_pull_request(&self, repository: &str, number: u64) -> Result<PullRequestData> {
+    pub async fn load_pull_request(
+        &self,
+        repository: &str,
+        number: u64,
+    ) -> Result<PullRequestData> {
         let pr_url = format!("https://api.github.com/repos/{repository}/pulls/{number}");
         let pr: PullRequest = self
             .http
@@ -44,10 +48,13 @@ impl GitHubClient {
             .context("decode pull request metadata")?;
 
         let files = self.load_files(repository, number).await?;
-        let ci = self.load_status(repository, &pr.head.sha).await.unwrap_or_else(|_| CombinedStatus {
-            state: "unknown".into(),
-            statuses: Vec::new(),
-        });
+        let ci = self
+            .load_status(repository, &pr.head.sha)
+            .await
+            .unwrap_or_else(|_| CombinedStatus {
+                state: "unknown".into(),
+                statuses: Vec::new(),
+            });
 
         Ok(PullRequestData {
             repository: repository.to_string(),
