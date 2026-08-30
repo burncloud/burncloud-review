@@ -38,7 +38,7 @@ use tokio::task::JoinHandle;
 use crate::{
     github::GitHubClient,
     local_ci::{LocalCiConfig, LocalCiEvent, LocalCiExecution},
-    models::{AiReviewReport, CommitStatus, GateStatus},
+    models::{AiReviewReport, CommitStatus, GateStatus, Severity},
     reviewer::{ReviewBackend, ReviewBackendOptions},
 };
 
@@ -193,7 +193,7 @@ async fn application_loop(
             .with_context(|| format!("load {repository} PR #{number}"))?;
         let mut app = App::new(data);
         app.status = format!(
-            "本地 CI 尚未运行。按 T 使用 {} 创建隔离 worktree 并执行真实 build/test。",
+            "正在准备只读 AI 安全预检；预检通过后会自动使用 {} 运行本地 CI。",
             local_ci.repo.display()
         );
 
@@ -279,6 +279,62 @@ struct ActiveLocalCi {
     started_at: Instant,
 }
 
+enum LocalExecutionDecision {
+    Allow,
+    Block(String),
+}
+
+fn start_ai_review(app: &mut App, reviewer: &ReviewBackend, purpose: &str) -> ActiveReview {
+    app.busy = true;
+    let cancel = Arc::new(AtomicBool::new(false));
+    let task_cancel = Arc::clone(&cancel);
+    let task_reviewer = reviewer.clone();
+    let data = app.data.clone();
+    let handle = tokio::spawn(async move { task_reviewer.review(&data, task_cancel).await });
+    app.status = format!(
+        "{purpose}已启动 · 只读分析，不执行 PR 代码 · 最长 {} 秒 · C取消",
+        reviewer.timeout_secs()
+    );
+    ActiveReview {
+        handle,
+        cancel,
+        started_at: Instant::now(),
+    }
+}
+
+fn local_execution_decision(app: &App) -> LocalExecutionDecision {
+    let Some(report) = app.report.as_ref() else {
+        return LocalExecutionDecision::Block("尚无 AI 安全预检结论".into());
+    };
+
+    let missing_patch: Vec<_> = app
+        .data
+        .files
+        .iter()
+        .filter(|file| file.patch.is_none())
+        .map(|file| file.filename.as_str())
+        .collect();
+    if !missing_patch.is_empty() {
+        return LocalExecutionDecision::Block(format!(
+            "以下文件没有可审查 Patch：{}",
+            missing_patch.join(", ")
+        ));
+    }
+
+    if let Some(finding) = report.findings.iter().find(|finding| {
+        finding.severity == Severity::Blocker
+            || (finding.severity == Severity::Major
+                && finding.category.eq_ignore_ascii_case("security"))
+    }) {
+        return LocalExecutionDecision::Block(format!(
+            "AI 发现可能影响本机执行安全的 {} 风险：{}",
+            finding.severity, finding.title
+        ));
+    }
+
+    LocalExecutionDecision::Allow
+}
+
 async fn review_event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -288,7 +344,8 @@ async fn review_event_loop(
     local_ci: &LocalCiConfig,
     mut active_ci: Option<ActiveLocalCi>,
 ) -> Result<ReviewExit> {
-    let mut active_review: Option<ActiveReview> = None;
+    let mut active_review: Option<ActiveReview> =
+        Some(start_ai_review(app, reviewer, "AI 安全预检"));
 
     loop {
         if app.should_quit {
@@ -296,23 +353,57 @@ async fn review_event_loop(
             return Ok(ReviewExit::Quit);
         }
 
-        poll_local_ci(app, &mut active_ci);
+        let ci_finished = poll_local_ci(app, &mut active_ci);
+        if ci_finished && active_review.is_none() {
+            active_review = Some(start_ai_review(app, reviewer, "CI 后最终 AI 审查"));
+        }
 
         if active_review
             .as_ref()
             .is_some_and(|active| active.handle.is_finished())
         {
             let active = active_review.take().expect("finished review exists");
+            let preflight = app.data.ci.state == "not_run";
             match active.handle.await {
                 Ok(Ok(report)) => {
                     app.set_report(report);
-                    app.status = "AI 审查完成。可以逐层查看关卡、文件和审查发现。".into();
+                    if preflight {
+                        match local_execution_decision(app) {
+                            LocalExecutionDecision::Allow => {
+                                active_ci = start_local_ci(app, local_ci);
+                                app.status = format!(
+                                    "AI 只读安全预检通过；已自动启动本地 CI（{}）。",
+                                    local_ci.repo.display()
+                                );
+                            }
+                            LocalExecutionDecision::Block(reason) => {
+                                app.status = format!(
+                                    "AI 安全预检未放行，本地 CI 未执行：{reason}。PR 代码保持未执行状态。"
+                                );
+                            }
+                        }
+                    } else {
+                        app.status =
+                            "本地 CI 后的最终 AI 审查完成。可以逐层查看关卡、文件和证据。".into();
+                    }
                 }
                 Ok(Err(error)) => {
-                    app.status = format!("AI 审查结束：{error:#}");
+                    app.status = if preflight {
+                        format!(
+                            "AI 安全预检失败：{error:#}。按 fail-closed 策略，本地 CI 不会执行。"
+                        )
+                    } else {
+                        format!("最终 AI 审查结束：{error:#}")
+                    };
                 }
                 Err(error) => {
-                    app.status = format!("AI 审查任务异常结束：{error}");
+                    app.status = if preflight {
+                        format!(
+                            "AI 安全预检任务异常结束：{error}。按 fail-closed 策略，本地 CI 不会执行。"
+                        )
+                    } else {
+                        format!("最终 AI 审查任务异常结束：{error}")
+                    };
                 }
             }
             app.busy = false;
@@ -356,25 +447,18 @@ async fn review_event_loop(
                 app.status = "正在取消本地 CI...".into();
             }
             KeyCode::Char('t') | KeyCode::Char('T') if !app.show_help && active_ci.is_none() => {
-                active_ci = start_local_ci(app, local_ci);
+                match local_execution_decision(app) {
+                    LocalExecutionDecision::Allow => {
+                        active_ci = start_local_ci(app, local_ci);
+                    }
+                    LocalExecutionDecision::Block(reason) => {
+                        app.status =
+                            format!("本地 CI 被安全策略阻止：{reason}。T 不能绕过 AI 安全预检。");
+                    }
+                }
             }
             KeyCode::Char('a') | KeyCode::Char('A') if !app.show_help && !app.busy => {
-                app.busy = true;
-                let cancel = Arc::new(AtomicBool::new(false));
-                let task_cancel = Arc::clone(&cancel);
-                let task_reviewer = reviewer.clone();
-                let data = app.data.clone();
-                let handle =
-                    tokio::spawn(async move { task_reviewer.review(&data, task_cancel).await });
-                active_review = Some(ActiveReview {
-                    handle,
-                    cancel,
-                    started_at: Instant::now(),
-                });
-                app.status = format!(
-                    "AI 审查已在后台启动 · 最长 {} 秒 · 按 C 取消",
-                    reviewer.timeout_secs()
-                );
+                active_review = Some(start_ai_review(app, reviewer, "AI 审查"));
             }
             KeyCode::Char('r') | KeyCode::Char('R') if !app.show_help && !app.busy => {
                 app.busy = true;
@@ -387,16 +471,14 @@ async fn review_event_loop(
                         cancel_local_ci(&active_ci);
                         active_ci = None;
                         app.replace_data(data);
-                        app.status = format!(
-                            "PR 已刷新。本地 CI 尚未运行；按 T 使用 {} 重新验证。",
-                            local_ci.repo.display()
-                        );
+                        active_review =
+                            Some(start_ai_review(app, reviewer, "刷新后的 AI 安全预检"));
                     }
                     Err(error) => {
                         app.status = format!("刷新失败: {error:#}");
+                        app.busy = false;
                     }
                 }
-                app.busy = false;
             }
             _ => {}
         }
@@ -420,7 +502,7 @@ fn start_local_ci(app: &mut App, config: &LocalCiConfig) -> Option<ActiveLocalCi
     })
 }
 
-fn poll_local_ci(app: &mut App, active_ci: &mut Option<ActiveLocalCi>) {
+fn poll_local_ci(app: &mut App, active_ci: &mut Option<ActiveLocalCi>) -> bool {
     let mut finished = false;
     if let Some(active) = active_ci.as_mut() {
         while let Ok(event) = active.execution.receiver.try_recv() {
@@ -494,6 +576,7 @@ fn poll_local_ci(app: &mut App, active_ci: &mut Option<ActiveLocalCi>) {
     if finished {
         *active_ci = None;
     }
+    finished
 }
 
 fn hard_fail_evidence(app: &mut App) {
