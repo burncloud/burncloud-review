@@ -226,9 +226,8 @@ fn root_detail_cn(app: &App) -> String {
 }
 
 fn gates_detail_cn(app: &App) -> String {
-    let mut text = String::from(
-        "审查关卡\n\n只有与当前风险等级相关的关卡拥有足够证据时，PR 才适合合并。\n\n",
-    );
+    let mut text =
+        String::from("审查关卡\n\n只有与当前风险等级相关的关卡拥有足够证据时，PR 才适合合并。\n\n");
     for kind in GateKind::ALL {
         let status = if app.report.is_some() {
             gate_status_label(app.gate_status(kind))
@@ -364,7 +363,9 @@ fn file_detail_cn(app: &App, idx: usize) -> String {
         }
     }
     if file.patch.is_none() {
-        text.push_str("\nGitHub 未提供该文件的 Patch（可能是二进制或文件过大）。应将其视为审查证据缺失。");
+        text.push_str(
+            "\nGitHub 未提供该文件的 Patch（可能是二进制或文件过大）。应将其视为审查证据缺失。",
+        );
     }
     text
 }
