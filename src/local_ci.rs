@@ -261,6 +261,8 @@ fn run_step(
         .args(&step.args)
         .current_dir(worktree)
         .env("CARGO_TARGET_DIR", target_dir)
+        .env("CARGO_TERM_COLOR", "never")
+        .env("NO_COLOR", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -477,7 +479,87 @@ fn read_logs(logs: &CommandLogs) -> String {
     } else {
         format!("{stdout}\n{stderr}")
     };
-    truncate_tail(&combined, 16_000)
+    let sanitized = sanitize_terminal_output(&combined);
+    truncate_tail(&sanitized, 16_000)
+}
+
+fn sanitize_terminal_output(value: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum State {
+        Text,
+        Escape,
+        Csi,
+        Osc,
+        OscEscape,
+        StringControl,
+        StringEscape,
+    }
+
+    let mut state = State::Text;
+    let mut output = String::with_capacity(value.len());
+
+    for ch in value.chars() {
+        state = match state {
+            State::Text => match ch {
+                '\u{1b}' => State::Escape,
+                '\r' => State::Text,
+                '\n' | '\t' => {
+                    output.push(ch);
+                    State::Text
+                }
+                c if c.is_control() => State::Text,
+                c => {
+                    output.push(c);
+                    State::Text
+                }
+            },
+            State::Escape => match ch {
+                '[' => State::Csi,
+                ']' => State::Osc,
+                'P' | 'X' | '^' | '_' => State::StringControl,
+                _ => State::Text,
+            },
+            State::Csi => {
+                if ('@'..='~').contains(&ch) {
+                    State::Text
+                } else {
+                    State::Csi
+                }
+            }
+            State::Osc => match ch {
+                '\u{7}' => State::Text,
+                '\u{1b}' => State::OscEscape,
+                _ => State::Osc,
+            },
+            State::OscEscape => {
+                if ch == '\\' {
+                    State::Text
+                } else if ch == '\u{1b}' {
+                    State::OscEscape
+                } else {
+                    State::Osc
+                }
+            }
+            State::StringControl => {
+                if ch == '\u{1b}' {
+                    State::StringEscape
+                } else {
+                    State::StringControl
+                }
+            }
+            State::StringEscape => {
+                if ch == '\\' {
+                    State::Text
+                } else if ch == '\u{1b}' {
+                    State::StringEscape
+                } else {
+                    State::StringControl
+                }
+            }
+        };
+    }
+
+    output
 }
 
 fn truncate_tail(value: &str, max_bytes: usize) -> String {
@@ -507,5 +589,17 @@ mod tests {
     fn empty_package_plan_uses_workspace() {
         let steps = build_steps(&[]);
         assert!(steps[1].command_line().contains("--workspace"));
+    }
+
+    #[test]
+    fn terminal_output_strips_ansi_color_and_cursor_sequences() {
+        let input = "before \u{1b}[31mred\u{1b}[0m \u{1b}[2J\u{1b}[Hafter";
+        assert_eq!(sanitize_terminal_output(input), "before red after");
+    }
+
+    #[test]
+    fn terminal_output_strips_osc_and_control_characters() {
+        let input = "\u{1b}]0;window title\u{7}abc\rdef\u{8}g";
+        assert_eq!(sanitize_terminal_output(input), "abcdefg");
     }
 }
