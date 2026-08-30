@@ -100,7 +100,9 @@ impl CodexClient {
             .context("send review evidence to Codex")?;
         drop(child.stdin.take());
 
-        let output = child.wait_with_output().context("wait for local Codex review")?;
+        let output = child
+            .wait_with_output()
+            .context("wait for local Codex review")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(anyhow!(
