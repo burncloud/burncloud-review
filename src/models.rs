@@ -92,6 +92,12 @@ pub struct CommitStatus {
 
 impl CommitStatus {
     pub fn evidence_text(&self) -> String {
+        if let Some(description) = &self.description {
+            if self.command.is_some() && description.contains("\n命令: ") {
+                return description.clone();
+            }
+        }
+
         let mut text = self.description.clone().unwrap_or_default();
         if let Some(command) = &self.command {
             if !text.is_empty() {
