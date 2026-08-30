@@ -6,28 +6,29 @@ It is built around one rule:
 
 > Review is not “the diff looks fine”. Review is evidence that the change stayed in scope, preserves architecture boundaries, behaves as intended, and is safe to merge.
 
-The application uses a Ratatui terminal UI. A reviewer starts from the recent pull-request list, enters one PR, sees the whole change first, and then drills down through review gates, affected components, files, hunks, changed lines, and AI findings.
+The application uses a Ratatui terminal UI. A reviewer starts from the recent pull-request list, enters one PR, sees the whole change first, and then drills down through review gates, affected components, files, hunks, changed lines, local CI evidence, and AI findings.
 
 ## Quick start
 
-For the main BurnCloud repository, the normal workflow is now just:
+Keep the repositories next to each other:
+
+```text
+Work/
+├── burncloud-review/
+└── burncloud/
+```
+
+Then run:
 
 ```bash
 cargo run
 ```
 
-BurnCloud Review opens a Ratatui picker for `burncloud/burncloud`:
-
-```text
-Recent Pull Requests
-
-▶ #412  [OPEN]   Add model runtime discovery
-  #411  [OPEN]   Fix provider routing
-  #410  [MERGED] Improve network status
-  ...
-```
+BurnCloud Review opens a Ratatui picker for `burncloud/burncloud`.
 
 Use `↑` / `↓` to select a PR and press `Enter` to open it. Press `Esc` inside a review to return to the PR list.
+
+GitHub is used to read PR metadata and changed-file patches. **GitHub Actions is not the authoritative CI source.** Build and test evidence is produced directly on the reviewer's machine from `../burncloud`.
 
 Public repositories can be read without a GitHub token, but GitHub rate limits unauthenticated requests. For regular use, set `GITHUB_TOKEN`.
 
@@ -38,12 +39,63 @@ $env:GITHUB_TOKEN="github_pat_xxx"
 cargo run
 ```
 
-Bash:
+## Local CI from `../burncloud`
+
+Opening a PR does **not** execute PR code automatically. This matters because a pull request can contain arbitrary `build.rs`, proc macros, tests, or other code that would execute on the reviewer's machine.
+
+After inspecting the PR, press `T` to explicitly run local CI.
+
+BurnCloud Review then performs this flow:
+
+```text
+../burncloud
+    │
+    ├── git fetch refs/pull/<PR>/head
+    │
+    ├── verify fetched SHA == GitHub PR head SHA
+    │
+    └── temporary detached git worktree
+            │
+            ├── cargo fmt --all -- --check
+            ├── cargo build <affected packages>
+            ├── cargo test <affected packages>
+            └── cargo clippy <affected packages> --all-targets -- -D warnings
+```
+
+The existing `../burncloud` branch, index, and uncommitted files are not switched or overwritten. The PR is tested in an isolated temporary worktree.
+
+BurnCloud Review uses `cargo metadata` to map changed paths to workspace packages and then includes reverse workspace dependents. For example, a change in `burncloud-client` may also cause the top-level `burncloud` package to be built and tested. Changes to root workspace files fall back to the whole workspace.
+
+Each CI step records:
+
+- exact command
+- running/completed state
+- exit code
+- elapsed time
+- captured command output
+
+A build or test is only marked `PASS` when the actual local process exits successfully.
+
+Keyboard controls:
+
+```text
+T   run / rerun local CI
+X   cancel active local CI
+```
+
+The default source repository is `../burncloud`. Override it with:
 
 ```bash
-export GITHUB_TOKEN=github_pat_xxx
-cargo run
+cargo run -- --local-repo /path/to/burncloud
 ```
+
+or:
+
+```bash
+BCR_LOCAL_REPO=/path/to/burncloud cargo run
+```
+
+Each local CI command has a 30-minute default timeout. Override it with `--local-ci-timeout-secs` or `BCR_LOCAL_CI_TIMEOUT_SECS`.
 
 ## Local Codex reviewer
 
@@ -69,7 +121,7 @@ To require local Codex and fail instead of falling back:
 cargo run -- --ai-backend codex
 ```
 
-The local reviewer is launched as an ephemeral, read-only Codex execution. BurnCloud Review supplies the PR metadata, patches, CI evidence, and a strict JSON output schema. Codex is used as an independent reviewer and is not allowed to modify the repository during this review path.
+The local reviewer is launched as an ephemeral, read-only Codex execution. BurnCloud Review supplies the PR metadata, patches, local CI evidence, and a strict JSON output schema. Codex is used as an independent reviewer and is not allowed to modify the repository during this review path.
 
 Normally Codex uses the model already configured by the local CLI. To override it:
 
@@ -87,15 +139,9 @@ export BCR_CODEX_MODEL=your-model
 cargo run
 ```
 
-If Codex is installed somewhere unusual, specify the executable explicitly:
-
-```bash
-cargo run -- --ai-backend codex --codex-bin /path/to/codex
-```
-
 ## HTTP AI backend
 
-The previous OpenAI-compatible backend remains available. Force it with:
+The OpenAI-compatible backend remains available. Force it with:
 
 ```bash
 cargo run -- --ai-backend http
@@ -108,18 +154,7 @@ http://localhost:3000/v1
 model = deepseek-v3
 ```
 
-Configure another OpenAI-compatible endpoint with:
-
-```bash
-export BCR_AI_BASE_URL=https://provider.example/v1
-export BCR_AI_API_KEY=...
-export BCR_AI_MODEL=your-review-model
-cargo run -- --ai-backend http
-```
-
 ## Optional direct launch
-
-The interactive PR picker is the default, but command-line shortcuts are still supported.
 
 Open another repository and choose a PR in the UI:
 
@@ -133,8 +168,6 @@ Open a specific PR directly:
 cargo run -- --repo burncloud/burncloud --pr 123
 ```
 
-The default repository can also be changed with `BCR_REPO`.
-
 ## Review model
 
 Every pull request is inspected through five gates:
@@ -143,19 +176,19 @@ Every pull request is inspected through five gates:
 2. **Code** — correctness, concurrency, error handling, performance, security.
 3. **Behavior** — what user-visible or runtime execution paths changed?
 4. **Architecture** — did any component cross its responsibility boundary?
-5. **Evidence** — build, tests, CI, known limitations, and proof required before merge.
+5. **Evidence** — local build/test/lint execution, known limitations, and proof required before merge.
 
 Risk levels are `R0` through `R4`:
 
 | Risk | Typical changes | Minimum review intent |
 |---|---|---|
-| `R0` | docs / prose | CI evidence |
-| `R1` | UI / low-impact tooling | AI review + CI |
-| `R2` | Node runtime / router / model / process / hardware | AI + human review |
+| `R0` | docs / prose | deterministic evidence |
+| `R1` | UI / low-impact tooling | AI review + local CI |
+| `R2` | Node runtime / router / model / process / hardware | AI + human review + local CI |
 | `R3` | Network control-plane / auth / security / identity | stronger human review |
 | `R4` | billing / settlement / clearing / wallet / ledger | strongest evidence and multi-reviewer policy |
 
-The deterministic path-based classifier runs before the model. A model may escalate risk, but it cannot lower a deterministic risk classification. Likewise, failed or unknown hard CI evidence cannot be promoted to PASS by a model response.
+The deterministic path-based classifier runs before the model. A model may escalate risk, but it cannot lower a deterministic risk classification. Likewise, a failed local CI result cannot be promoted to PASS by a model response.
 
 ## Interactive flow
 
@@ -180,8 +213,6 @@ Pull Request
     └── BLOCKER / MAJOR / MINOR / NIT
 ```
 
-The review screen deliberately starts at the PR level. Nothing forces a reviewer to read hundreds of diff lines before understanding scope, risk, and impact.
-
 ## Keyboard
 
 ### PR picker
@@ -203,55 +234,31 @@ The review screen deliberately starts at the PR level. Nothing forces a reviewer
 | `Enter` | toggle the current layer open / closed |
 | `Tab` | switch focus between review tree and evidence/detail pane |
 | `PgUp` / `PgDn` | scroll evidence/detail |
-| `a` | run the independent Codex / AI review |
-| `r` | refresh PR metadata, patches and CI from GitHub |
+| `T` | run local CI from `../burncloud` in an isolated worktree |
+| `X` | cancel active local CI |
+| `A` | run the independent Codex / AI review |
+| `C` | cancel active AI review |
+| `R` | refresh PR metadata and patches from GitHub; local CI returns to not-run |
 | `Esc` | return to the recent PR picker |
 | `?` | toggle help |
 | `q` | quit BurnCloud Review |
 
-Suggested reviewer path:
+## Evidence policy
+
+GitHub supplies the identity of the change: PR number, head SHA, metadata, changed files, and patches.
+
+The local machine supplies execution evidence:
 
 ```text
-Recent PR list
-↓
-PR overview
-↓
-Risk + Review Gates
-↓
-Affected Components
-↓
-Changed Files
-↓
-Hunks
-↓
-Changed Lines
-↓
-AI Findings + Evidence
-↓
-Human merge decision
+GitHub PR metadata
+        +
+verified local fetched SHA
+        +
+local worktree
+        +
+real Cargo process exit codes
+        =
+BurnCloud Review CI evidence
 ```
 
-## What the current version does
-
-- Opens directly into a recent-PR Ratatui picker when no PR number is supplied.
-- Defaults to the `burncloud/burncloud` repository.
-- Keeps `--repo` and `--pr` as optional direct-launch shortcuts.
-- Detects and uses a local Codex CLI by default when available.
-- Runs the Codex review in an ephemeral read-only sandbox and requests structured JSON output.
-- Keeps the OpenAI-compatible HTTP reviewer as an explicit backend and automatic fallback.
-- Pulls PR metadata, changed files and commit status from GitHub.
-- Parses unified patches into file → hunk → changed-line hierarchy.
-- Assigns a deterministic `R0`–`R4` preflight risk level.
-- Infers initial affected components from changed paths.
-- Provides fully keyboard-driven Ratatui navigation.
-- Anchors findings to file/line only when the supplied patch supports that location.
-- Keeps model findings separate from the reviewer’s final decision.
-
-## Next layers
-
-- GitHub inline review submission / request-changes / approve actions.
-- BurnCloud architecture policy-as-code loaded from the documentation repository.
-- Before/after E2E request-flow comparison.
-- Test/evidence ingestion from GitHub Actions check runs and artifacts.
-- Multi-model reviewer roles (code, architecture, tests/security) with consensus and disagreement display.
-- Persisted review sessions and reproducible signed review reports.
+This separation avoids treating a GitHub badge as proof that code was actually compiled or tested in the reviewer's environment.
