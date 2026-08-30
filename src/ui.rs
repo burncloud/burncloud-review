@@ -185,7 +185,7 @@ fn display_detail_text(app: &App) -> String {
         NodeId::Component(idx) => component_detail_cn(app, idx),
         NodeId::Files => files_detail_cn(app),
         NodeId::File(idx) => file_detail_cn(app, idx),
-        NodeId::Hunk(file_idx, hunk_idx) => hunk_detail_cn(app, file_idx, hunk_idx),
+        NodeId::Hunk(_, _) => app.detail_text(),
         NodeId::Line(file_idx, hunk_idx, line_idx) => {
             line_detail_cn(app, file_idx, hunk_idx, line_idx)
         }
@@ -365,22 +365,6 @@ fn file_detail_cn(app: &App, idx: usize) -> String {
     }
     if file.patch.is_none() {
         text.push_str("\nGitHub 未提供该文件的 Patch（可能是二进制或文件过大）。应将其视为审查证据缺失。");
-    }
-    text
-}
-
-fn hunk_detail_cn(app: &App, file_idx: usize, hunk_idx: usize) -> String {
-    let Some(file) = app.data.files.get(file_idx) else {
-        return "该文件已不可用。".into();
-    };
-    let Some(hunk) = app.hunks.get(file_idx).and_then(|v| v.get(hunk_idx)) else {
-        return "该 Hunk 已不可用。".into();
-    };
-    let mut text = format!("{}\n{}\n\n", file.filename, hunk.header);
-    for line in &hunk.lines {
-        let old = line.old_line.map(|n| n.to_string()).unwrap_or_default();
-        let new = line.new_line.map(|n| n.to_string()).unwrap_or_default();
-        text.push_str(&format!("{:>5} {:>5} {}\n", old, new, line.content));
     }
     text
 }
