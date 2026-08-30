@@ -308,9 +308,8 @@ async fn review_event_loop(
                 let task_cancel = Arc::clone(&cancel);
                 let task_reviewer = reviewer.clone();
                 let data = app.data.clone();
-                let handle = tokio::spawn(async move {
-                    task_reviewer.review(&data, task_cancel).await
-                });
+                let handle =
+                    tokio::spawn(async move { task_reviewer.review(&data, task_cancel).await });
                 active_review = Some(ActiveReview {
                     handle,
                     cancel,
