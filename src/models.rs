@@ -80,6 +80,41 @@ pub struct CommitStatus {
     pub state: String,
     pub context: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub output: Option<String>,
+}
+
+impl CommitStatus {
+    pub fn evidence_text(&self) -> String {
+        let mut text = self.description.clone().unwrap_or_default();
+        if let Some(command) = &self.command {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&format!("命令: {command}"));
+        }
+        if let Some(duration_ms) = self.duration_ms {
+            text.push_str(&format!("\n耗时: {:.1}s", duration_ms as f64 / 1000.0));
+        }
+        if let Some(exit_code) = self.exit_code {
+            text.push_str(&format!("\n退出码: {exit_code}"));
+        }
+        if let Some(output) = &self.output {
+            text.push_str("\n输出:\n");
+            if output.trim().is_empty() {
+                text.push_str("<无输出>");
+            } else {
+                text.push_str(output.trim());
+            }
+        }
+        text
+    }
 }
 
 #[derive(Debug, Clone)]
