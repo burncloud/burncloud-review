@@ -56,13 +56,11 @@ pub fn draw(frame: &mut Frame, picker: &PrPicker, backend: &str) {
         .border_style(Style::default().fg(Color::Cyan));
     frame.render_widget(list_block, body[0]);
 
-    let list = List::new(items)
-        .highlight_symbol("▶ ")
-        .highlight_style(
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        );
+    let list = List::new(items).highlight_symbol("▶ ").highlight_style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    );
     let mut state = ListState::default();
     if !picker.prs.is_empty() {
         state.select(Some(picker.selected));
