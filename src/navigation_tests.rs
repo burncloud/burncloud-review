@@ -59,7 +59,9 @@ fn drills_from_pr_to_file_hunk_and_changed_line() {
 
     let initial = app.tree_entries();
     assert!(initial.iter().any(|entry| entry.id == NodeId::Files));
-    assert!(!initial.iter().any(|entry| matches!(entry.id, NodeId::File(_))));
+    assert!(!initial
+        .iter()
+        .any(|entry| matches!(entry.id, NodeId::File(_))));
 
     select(&mut app, NodeId::Files);
     app.expand_selected();
