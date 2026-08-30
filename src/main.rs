@@ -3,6 +3,8 @@ mod app;
 mod diff;
 mod github;
 mod models;
+#[cfg(test)]
+mod navigation_tests;
 mod review;
 mod ui;
 
