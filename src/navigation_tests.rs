@@ -82,6 +82,15 @@ fn drills_from_pr_to_file_hunk_and_changed_line() {
         .iter()
         .any(|entry| matches!(entry.id, NodeId::Line(0, 0, _))));
 
+    // Left first closes an expanded layer in place.
+    app.collapse_selected();
+    assert_eq!(app.selected_id(), NodeId::Hunk(0, 0));
+    assert!(!app
+        .tree_entries()
+        .iter()
+        .any(|entry| matches!(entry.id, NodeId::Line(0, 0, _))));
+
+    // Left again on the already-closed layer walks back to its parent.
     app.collapse_selected();
     assert_eq!(app.selected_id(), NodeId::File(0));
 }
