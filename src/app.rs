@@ -88,6 +88,7 @@ impl App {
         self.expanded.clear();
         self.expanded.insert(NodeId::Root);
         self.selected = 0;
+        self.focus = Focus::Tree;
         self.detail_scroll = 0;
         self.status = "Pull request refreshed. AI report cleared; press a to review again.".into();
     }
@@ -269,10 +270,16 @@ impl App {
     }
 
     pub fn page_up(&mut self) {
+        if self.focus == Focus::Tree {
+            self.focus = Focus::Detail;
+        }
         self.detail_scroll = self.detail_scroll.saturating_sub(10);
     }
 
     pub fn page_down(&mut self) {
+        if self.focus == Focus::Tree {
+            self.focus = Focus::Detail;
+        }
         self.detail_scroll = self.detail_scroll.saturating_add(10);
     }
 
@@ -298,13 +305,21 @@ impl App {
             {
                 self.selected = idx;
                 self.detail_scroll = 0;
+                return;
             }
+        }
+
+        // A concrete leaf already has all of its information in the right-hand pane.
+        // Right arrow therefore behaves like moving into that pane instead of doing nothing.
+        if !entry.expandable {
+            self.focus = Focus::Detail;
+            self.detail_scroll = 0;
         }
     }
 
     pub fn collapse_selected(&mut self) {
         if self.focus == Focus::Detail {
-            self.detail_scroll = self.detail_scroll.saturating_sub(4);
+            self.focus = Focus::Tree;
             return;
         }
         let entries = self.tree_entries();
@@ -342,6 +357,8 @@ impl App {
             .map(|entry| entry.expandable)
             .unwrap_or(false);
         if !expandable {
+            self.focus = Focus::Detail;
+            self.detail_scroll = 0;
             return;
         }
         if self.expanded.contains(&id) {
@@ -399,7 +416,7 @@ impl App {
     fn root_detail(&self) -> String {
         let pr = &self.data.pr;
         let mut text = format!(
-            "PR #{} — {}\n\nRepository: {}\nAuthor: {}\nState: {}{}\nBase: {}\nHead: {} @ {}\nRisk: {}\nCI: {}\nChanges: +{} -{} across {} files\n\n{}",
+            "PR #{} — {}\n\nRepository: {}\nAuthor: {}\nState: {}{}\nBase: {}\nHead: {} @ {}\nRisk: {}\nLocal CI: {}\nChanges: +{} -{} across {} files\n\n{}",
             pr.number,
             pr.title,
             self.data.repository,
@@ -450,30 +467,24 @@ impl App {
             status_label(status)
         );
         if let Some(review) = self.gate_review(kind) {
-            text.push_str(&review.summary);
-            if !review.items.is_empty() {
-                text.push_str("\n\nEvidence / concerns:\n");
-                for item in &review.items {
-                    text.push_str(&format!("• {item}\n"));
-                }
-            }
+            text.push_str(&review.detailed_text_cn());
         } else {
             text.push_str(match kind {
                 GateKind::Scope => "AI review pending. Compare requested intent with changed files and reject unrelated edits.",
                 GateKind::Code => "AI review pending. Inspect correctness, error paths, concurrency, cleanup, security and regressions.",
                 GateKind::Behavior => "AI review pending. Identify changed request/runtime paths and failure behavior.",
                 GateKind::Architecture => "AI review pending. Verify component responsibilities and dependency direction.",
-                GateKind::Evidence => "AI review pending. Raw GitHub commit status is shown below.",
+                GateKind::Evidence => "AI review pending. Local CI evidence is shown below when available.",
             });
         }
         if kind == GateKind::Evidence {
-            text.push_str(&format!("\n\nCombined CI: {}\n", self.data.ci.state));
+            text.push_str(&format!("\n\nLocal CI: {}\n", self.data.ci.state));
             for status in &self.data.ci.statuses {
                 text.push_str(&format!(
-                    "• {}: {} — {}\n",
+                    "\n• {}: {}\n{}\n",
                     status.context,
                     status.state,
-                    status.description.as_deref().unwrap_or("")
+                    status.evidence_text()
                 ));
             }
         }
