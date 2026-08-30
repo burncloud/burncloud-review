@@ -296,22 +296,17 @@ fn run_step(
     let output = read_logs(&temp);
     let success = status.success();
     let elapsed_ms = started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-    Ok(CommitStatus {
+    let mut result = CommitStatus {
         state: if success { "success" } else { "failure" }.into(),
         context: step.context.clone(),
-        description: Some(format!(
-            "{}\n命令: {}\n耗时: {:.1}s\n退出码: {}\n输出:\n{}",
-            if success { "通过" } else { "失败" },
-            step.command_line(),
-            elapsed_ms as f64 / 1000.0,
-            status.code().unwrap_or(-1),
-            if output.trim().is_empty() {
-                "<无输出>"
-            } else {
-                output.trim()
-            }
-        )),
-    })
+        description: Some(if success { "通过" } else { "失败" }.into()),
+        command: Some(step.command_line()),
+        duration_ms: Some(elapsed_ms),
+        exit_code: status.code(),
+        output: Some(output),
+    };
+    result.description = Some(result.evidence_text());
+    Ok(result)
 }
 
 fn affected_packages(worktree: &Path, files: &[ChangedFile]) -> Result<Vec<String>> {
