@@ -112,7 +112,7 @@ fn draw_detail(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let text = format!(
-        "{}  |  ↑↓ move  ←→ layer  Enter expand  Tab focus  PgUp/PgDn scroll  a AI review  r refresh  ? help  q quit",
+        "{}  |  ↑↓ move  ←→ layer  Enter expand  Tab focus  a AI review  r refresh  Esc PR list  ? help  q quit",
         app.status
     );
     frame.render_widget(
@@ -136,8 +136,9 @@ The left side is a hierarchy, not a flat file list.
 Enter        Toggle current layer open / closed
 Tab          Switch focus: review tree ↔ detail pane
 PgUp/PgDn   Scroll evidence/detail by page
-A            Run the independent LLM review
+A            Run the independent AI/Codex review
 R            Reload PR metadata, files and CI from GitHub
+Esc          Return to the recent PR picker
 ?            Toggle this help
 Q            Quit
 
