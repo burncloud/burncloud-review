@@ -71,3 +71,41 @@ pub fn changed_line_indexes(hunk: &DiffHunk) -> Vec<usize> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_line_numbers_across_add_remove_and_context() {
+        let patch = "@@ -10,3 +10,4 @@ fn demo()\n context\n-old\n+new\n+extra";
+        let hunks = parse_patch(patch);
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].lines.len(), 4);
+
+        let context = &hunks[0].lines[0];
+        assert_eq!(context.old_line, Some(10));
+        assert_eq!(context.new_line, Some(10));
+
+        let removed = &hunks[0].lines[1];
+        assert_eq!(removed.kind, DiffLineKind::Remove);
+        assert_eq!(removed.old_line, Some(11));
+        assert_eq!(removed.new_line, None);
+
+        let added = &hunks[0].lines[2];
+        assert_eq!(added.kind, DiffLineKind::Add);
+        assert_eq!(added.new_line, Some(11));
+
+        let changed = changed_line_indexes(&hunks[0]);
+        assert_eq!(changed, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn parses_multiple_hunks() {
+        let patch = "@@ -1 +1 @@\n-a\n+b\n@@ -20 +21 @@\n-c\n+d";
+        let hunks = parse_patch(patch);
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[1].lines[0].old_line, Some(20));
+        assert_eq!(hunks[1].lines[1].new_line, Some(21));
+    }
+}
