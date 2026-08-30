@@ -300,15 +300,17 @@ fn run_step(
         state: if success { "success" } else { "failure" }.into(),
         context: step.context.clone(),
         description: Some(format!(
-            "{} · {:.1}s · exit {}",
+            "{}\n命令: {}\n耗时: {:.1}s\n退出码: {}\n输出:\n{}",
             if success { "通过" } else { "失败" },
+            step.command_line(),
             elapsed_ms as f64 / 1000.0,
-            status.code().unwrap_or(-1)
+            status.code().unwrap_or(-1),
+            if output.trim().is_empty() {
+                "<无输出>"
+            } else {
+                output.trim()
+            }
         )),
-        command: Some(step.command_line()),
-        duration_ms: Some(elapsed_ms),
-        exit_code: status.code(),
-        output: Some(output),
     })
 }
 
@@ -454,7 +456,7 @@ impl CommandLogs {
             .duration_since(UNIX_EPOCH)
             .context("system time before unix epoch")?
             .as_nanos();
-        let safe = context.replace(['/', '\\'], "-");
+        let safe = context.replace('/', "-").replace('\\', "-");
         let dir = std::env::temp_dir().join("burncloud-review").join("logs");
         fs::create_dir_all(&dir).context("create local CI log directory")?;
         Ok(Self {
