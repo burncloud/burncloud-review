@@ -17,10 +17,7 @@ use crate::{
 #[derive(Clone)]
 pub enum ReviewBackend {
     Codex(CodexClient),
-    Http {
-        client: AiClient,
-        timeout: Duration,
-    },
+    Http { client: AiClient, timeout: Duration },
 }
 
 pub struct ReviewBackendOptions {
