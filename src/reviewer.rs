@@ -153,9 +153,11 @@ fn apply_execution_guardrails(
     report.gates.evidence.items.insert(0, summary);
 
     for finding in findings {
-        if !report.findings.iter().any(|existing| {
-            existing.path == finding.path && existing.title == finding.title
-        }) {
+        if !report
+            .findings
+            .iter()
+            .any(|existing| existing.path == finding.path && existing.title == finding.title)
+        {
             report.findings.push(finding);
         }
     }
@@ -313,7 +315,8 @@ const EXECUTION_PATTERNS: &[ExecutionPattern] = &[
         needle: "std::process::command",
         severity: Severity::Blocker,
         title: "新增子进程执行能力，禁止在宿主机运行",
-        explanation: "新增代码可启动任意子进程；cargo test/build 一旦触达该路径，可能执行宿主机命令。",
+        explanation:
+            "新增代码可启动任意子进程；cargo test/build 一旦触达该路径，可能执行宿主机命令。",
         suggestion: "仅在无凭据、默认断网、可销毁的 VM/Container 中执行。",
     },
     ExecutionPattern {
@@ -327,7 +330,8 @@ const EXECUTION_PATTERNS: &[ExecutionPattern] = &[
         needle: "powershell",
         severity: Severity::Blocker,
         title: "新增 PowerShell 执行路径",
-        explanation: "PowerShell 可以访问文件系统、注册表、网络和凭据，不能在管理员宿主机直接验证不可信 PR。",
+        explanation:
+            "PowerShell 可以访问文件系统、注册表、网络和凭据，不能在管理员宿主机直接验证不可信 PR。",
         suggestion: "使用 Windows Sandbox/Hyper-V Disposable VM。",
     },
     ExecutionPattern {
@@ -383,7 +387,8 @@ const EXECUTION_PATTERNS: &[ExecutionPattern] = &[
         needle: "std::env::var",
         severity: Severity::Major,
         title: "新增环境变量读取能力",
-        explanation: "不可信代码读取环境变量时可能接触 GitHub Token、API Key、代理配置或其他宿主秘密。",
+        explanation:
+            "不可信代码读取环境变量时可能接触 GitHub Token、API Key、代理配置或其他宿主秘密。",
         suggestion: "Sandbox 中清空敏感环境变量，只注入最小必要配置。",
     },
     ExecutionPattern {
@@ -405,9 +410,7 @@ const EXECUTION_PATTERNS: &[ExecutionPattern] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{
-        CombinedStatus, GitHubUser, GitRef, PullRequest, PullRequestData,
-    };
+    use crate::models::{CombinedStatus, GitHubUser, GitRef, PullRequest, PullRequestData};
 
     fn file(path: &str, patch: Option<&str>) -> ChangedFile {
         ChangedFile {
@@ -433,11 +436,20 @@ mod tests {
                 deletions: 0,
                 changed_files: files.len() as u64,
                 user: GitHubUser { login: "u".into() },
-                base: GitRef { name: "main".into(), sha: "base".into() },
-                head: GitRef { name: "pr".into(), sha: "head".into() },
+                base: GitRef {
+                    name: "main".into(),
+                    sha: "base".into(),
+                },
+                head: GitRef {
+                    name: "pr".into(),
+                    sha: "head".into(),
+                },
             },
             files,
-            ci: CombinedStatus { state: "not_run".into(), statuses: vec![] },
+            ci: CombinedStatus {
+                state: "not_run".into(),
+                statuses: vec![],
+            },
         }
     }
 
@@ -470,10 +482,13 @@ mod tests {
         )]);
         let guarded = apply_execution_guardrails(report(), &d);
         assert_eq!(guarded.risk, RiskLevel::R4);
-        assert!(guarded
-            .findings
-            .iter()
-            .any(|finding| finding.severity == Severity::Blocker && finding.category == "security"));
+        assert!(
+            guarded
+                .findings
+                .iter()
+                .any(|finding| finding.severity == Severity::Blocker
+                    && finding.category == "security")
+        );
     }
 
     #[test]
