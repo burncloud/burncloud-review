@@ -329,7 +329,10 @@ fn gate_checklist_cn(kind: GateKind) -> &'static str {
 }
 
 fn append_local_ci_evidence(app: &App, text: &mut String) {
-    text.push_str(&format!("\n\n━━ 本地 CI 硬证据 ━━\n状态: {}", app.data.ci.state));
+    text.push_str(&format!(
+        "\n\n━━ 本地 CI 硬证据 ━━\n状态: {}",
+        app.data.ci.state
+    ));
     if app.data.ci.statuses.is_empty() {
         text.push_str("\n• 尚无本地执行证据。");
         return;
