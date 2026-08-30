@@ -3,8 +3,8 @@ use regex::Regex;
 use crate::models::{DiffHunk, DiffLine, DiffLineKind};
 
 pub fn parse_patch(patch: &str) -> Vec<DiffHunk> {
-    let header_re = Regex::new(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$")
-        .expect("valid hunk regex");
+    let header_re =
+        Regex::new(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$").expect("valid hunk regex");
 
     let mut hunks = Vec::new();
     let mut current: Option<DiffHunk> = None;
