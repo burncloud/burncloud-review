@@ -56,7 +56,11 @@ fn draw_tree(frame: &mut Frame, app: &App, area: Rect) {
         .map(|entry| {
             let indent = "  ".repeat(entry.depth);
             let marker = if entry.expandable {
-                if entry.expanded { "▾ " } else { "▸ " }
+                if entry.expanded {
+                    "▾ "
+                } else {
+                    "▸ "
+                }
             } else {
                 "• "
             };
