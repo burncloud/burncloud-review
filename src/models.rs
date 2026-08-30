@@ -76,24 +76,19 @@ impl std::fmt::Display for RiskLevel {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum GateStatus {
+    #[default]
     Pending,
     Pass,
     Warn,
     Fail,
 }
 
-impl Default for GateStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
-}
-
 impl std::fmt::Display for GateStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self).map(|_| ())
+        write!(f, "{:?}", self)
     }
 }
 
@@ -182,7 +177,7 @@ pub enum Severity {
 
 impl std::fmt::Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self).map(|_| ())
+        write!(f, "{:?}", self)
     }
 }
 
