@@ -1,11 +1,15 @@
 mod ai;
 mod app;
+mod codex;
 mod diff;
 mod github;
 mod models;
 #[cfg(test)]
 mod navigation_tests;
+mod picker;
+mod picker_ui;
 mod review;
+mod reviewer;
 mod ui;
 
 use std::{io, time::Duration};
@@ -18,27 +22,43 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use picker::PrPicker;
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use crate::{ai::AiClient, github::GitHubClient};
+use crate::{
+    github::GitHubClient,
+    reviewer::{ReviewBackend, ReviewBackendOptions},
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "burncloud-review")]
 #[command(about = "Interactive evidence-driven pull-request review console")]
 struct Args {
-    /// Repository in owner/name form.
-    #[arg(long)]
+    /// Repository in owner/name form. Defaults to the main BurnCloud repository.
+    #[arg(long, env = "BCR_REPO", default_value = "burncloud/burncloud")]
     repo: String,
 
-    /// Pull request number.
+    /// Optional pull request number. Omit it to choose from the Ratatui PR picker.
     #[arg(long)]
-    pr: u64,
+    pr: Option<u64>,
 
     /// GitHub token. Public repositories can work without one but are rate limited.
     #[arg(long, env = "GITHUB_TOKEN")]
     github_token: Option<String>,
 
-    /// OpenAI-compatible base URL. BurnCloud Node is the default local AI endpoint.
+    /// Review backend: auto, codex, or http. Auto prefers a local Codex CLI.
+    #[arg(long, env = "BCR_AI_BACKEND", default_value = "auto")]
+    ai_backend: String,
+
+    /// Optional explicit local Codex executable path/name.
+    #[arg(long, env = "BCR_CODEX_BIN")]
+    codex_bin: Option<String>,
+
+    /// Optional model override for local Codex. Omit it to use Codex configuration.
+    #[arg(long, env = "BCR_CODEX_MODEL")]
+    codex_model: Option<String>,
+
+    /// OpenAI-compatible base URL used by the HTTP fallback/backend.
     #[arg(
         long,
         env = "BCR_AI_BASE_URL",
@@ -46,11 +66,11 @@ struct Args {
     )]
     ai_base_url: String,
 
-    /// Optional bearer token for the AI endpoint.
+    /// Optional bearer token for the HTTP AI endpoint.
     #[arg(long, env = "BCR_AI_API_KEY")]
     ai_api_key: Option<String>,
 
-    /// Model used for independent review.
+    /// Model used by the HTTP AI backend.
     #[arg(long, env = "BCR_AI_MODEL", default_value = "deepseek-v3")]
     ai_model: String,
 }
@@ -61,23 +81,23 @@ async fn main() -> Result<()> {
     validate_repo(&args.repo)?;
 
     let github = GitHubClient::new(args.github_token.as_deref())?;
-    eprintln!("Loading {} PR #{} from GitHub...", args.repo, args.pr);
-    let data = github
-        .load_pull_request(&args.repo, args.pr)
-        .await
-        .with_context(|| format!("load {} PR #{}", args.repo, args.pr))?;
+    let reviewer = ReviewBackend::from_options(ReviewBackendOptions {
+        backend: args.ai_backend,
+        codex_bin: args.codex_bin,
+        codex_model: args.codex_model,
+        http_base_url: args.ai_base_url,
+        http_api_key: args.ai_api_key,
+        http_model: args.ai_model,
+    })?;
 
-    let ai = AiClient::new(args.ai_base_url, args.ai_api_key, args.ai_model)?;
-    let ai_summary = ai.endpoint_summary();
-    let app = App::new(data);
-    run_terminal(app, github, ai, ai_summary).await
+    run_terminal(args.repo, args.pr, github, reviewer).await
 }
 
 async fn run_terminal(
-    mut app: App,
+    repository: String,
+    initial_pr: Option<u64>,
     github: GitHubClient,
-    ai: AiClient,
-    ai_summary: String,
+    reviewer: ReviewBackend,
 ) -> Result<()> {
     enable_raw_mode().context("enable terminal raw mode")?;
     let mut stdout = io::stdout();
@@ -86,7 +106,7 @@ async fn run_terminal(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create Ratatui terminal")?;
 
-    let result = event_loop(&mut terminal, &mut app, &github, &ai, &ai_summary).await;
+    let result = application_loop(&mut terminal, &repository, initial_pr, &github, &reviewer).await;
 
     disable_raw_mode().ok();
     execute!(
@@ -99,33 +119,125 @@ async fn run_terminal(
     result
 }
 
-async fn event_loop(
+async fn application_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    repository: &str,
+    initial_pr: Option<u64>,
+    github: &GitHubClient,
+    reviewer: &ReviewBackend,
+) -> Result<()> {
+    let reviewer_summary = reviewer.summary();
+    let mut next_pr = initial_pr;
+
+    loop {
+        let number = match next_pr.take() {
+            Some(number) => number,
+            None => match pick_pull_request(terminal, repository, github, &reviewer_summary).await?
+            {
+                Some(number) => number,
+                None => return Ok(()),
+            },
+        };
+
+        terminal.draw(|frame| {
+            picker_ui::draw_loading(
+                frame,
+                repository,
+                &reviewer_summary,
+                &format!("Loading PR #{number}, changed files and CI evidence..."),
+            )
+        })?;
+
+        let data = github
+            .load_pull_request(repository, number)
+            .await
+            .with_context(|| format!("load {repository} PR #{number}"))?;
+        let mut app = App::new(data);
+
+        match review_event_loop(terminal, &mut app, github, reviewer, &reviewer_summary).await? {
+            ReviewExit::BackToPicker => {}
+            ReviewExit::Quit => return Ok(()),
+        }
+    }
+}
+
+async fn pick_pull_request(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    repository: &str,
+    github: &GitHubClient,
+    reviewer_summary: &str,
+) -> Result<Option<u64>> {
+    terminal.draw(|frame| {
+        picker_ui::draw_loading(
+            frame,
+            repository,
+            reviewer_summary,
+            "Loading recent pull requests from GitHub...",
+        )
+    })?;
+
+    let prs = github
+        .load_recent_pull_requests(repository, 30)
+        .await
+        .with_context(|| format!("load recent pull requests for {repository}"))?;
+    let mut picker = PrPicker::new(repository.to_string(), prs);
+
+    loop {
+        terminal.draw(|frame| picker_ui::draw(frame, &picker, reviewer_summary))?;
+
+        let Some(key) = read_key()? else {
+            continue;
+        };
+        match key {
+            KeyCode::Up => picker.move_up(),
+            KeyCode::Down => picker.move_down(),
+            KeyCode::Enter => {
+                if let Some(number) = picker.selected_number() {
+                    return Ok(Some(number));
+                }
+            }
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                picker.status = "Refreshing recent pull requests...".into();
+                terminal.draw(|frame| picker_ui::draw(frame, &picker, reviewer_summary))?;
+                match github.load_recent_pull_requests(repository, 30).await {
+                    Ok(prs) => picker.replace(prs),
+                    Err(error) => picker.status = format!("Refresh failed: {error:#}"),
+                }
+            }
+            KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => return Ok(None),
+            _ => {}
+        }
+    }
+}
+
+enum ReviewExit {
+    BackToPicker,
+    Quit,
+}
+
+async fn review_event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     github: &GitHubClient,
-    ai: &AiClient,
-    ai_summary: &str,
-) -> Result<()> {
+    reviewer: &ReviewBackend,
+    reviewer_summary: &str,
+) -> Result<ReviewExit> {
     loop {
-        terminal.draw(|frame| ui::draw(frame, app, ai_summary))?;
         if app.should_quit {
-            return Ok(());
+            return Ok(ReviewExit::Quit);
         }
 
-        if !event::poll(Duration::from_millis(200)).context("poll terminal event")? {
-            continue;
-        }
-        let Event::Key(key) = event::read().context("read terminal event")? else {
+        terminal.draw(|frame| ui::draw(frame, app, reviewer_summary))?;
+
+        let Some(key) = read_key()? else {
             continue;
         };
-        if key.kind == KeyEventKind::Release {
-            continue;
-        }
 
-        match key.code {
+        match key {
             KeyCode::Char('q') | KeyCode::Char('Q') if !app.busy => app.should_quit = true,
-            KeyCode::Char('?') => app.show_help = !app.show_help,
             KeyCode::Esc if app.show_help => app.show_help = false,
+            KeyCode::Esc if !app.busy => return Ok(ReviewExit::BackToPicker),
+            KeyCode::Char('?') => app.show_help = !app.show_help,
             KeyCode::Tab if !app.show_help => app.toggle_focus(),
             KeyCode::Up if !app.show_help => app.move_up(),
             KeyCode::Down if !app.show_help => app.move_down(),
@@ -136,9 +248,11 @@ async fn event_loop(
             KeyCode::PageDown if !app.show_help => app.page_down(),
             KeyCode::Char('a') | KeyCode::Char('A') if !app.show_help && !app.busy => {
                 app.busy = true;
-                app.status = "Running independent AI review across scope/code/behavior/architecture/evidence...".into();
-                terminal.draw(|frame| ui::draw(frame, app, ai_summary))?;
-                match ai.review(&app.data).await {
+                app.status =
+                    "Running independent review across scope/code/behavior/architecture/evidence..."
+                        .into();
+                terminal.draw(|frame| ui::draw(frame, app, reviewer_summary))?;
+                match reviewer.review(&app.data).await {
                     Ok(report) => app.set_report(report),
                     Err(error) => {
                         app.status = format!("AI review failed: {error:#}");
@@ -149,7 +263,7 @@ async fn event_loop(
             KeyCode::Char('r') | KeyCode::Char('R') if !app.show_help && !app.busy => {
                 app.busy = true;
                 app.status = "Refreshing pull request, changed files and CI evidence...".into();
-                terminal.draw(|frame| ui::draw(frame, app, ai_summary))?;
+                terminal.draw(|frame| ui::draw(frame, app, reviewer_summary))?;
                 let repository = app.data.repository.clone();
                 let number = app.data.pr.number;
                 match github.load_pull_request(&repository, number).await {
@@ -163,6 +277,19 @@ async fn event_loop(
             _ => {}
         }
     }
+}
+
+fn read_key() -> Result<Option<KeyCode>> {
+    if !event::poll(Duration::from_millis(200)).context("poll terminal event")? {
+        return Ok(None);
+    }
+    let Event::Key(key) = event::read().context("read terminal event")? else {
+        return Ok(None);
+    };
+    if key.kind == KeyEventKind::Release {
+        return Ok(None);
+    }
+    Ok(Some(key.code))
 }
 
 fn validate_repo(repository: &str) -> Result<()> {

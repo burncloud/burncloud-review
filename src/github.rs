@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
 
-use crate::models::{ChangedFile, CombinedStatus, PullRequest, PullRequestData};
+use crate::models::{ChangedFile, CombinedStatus, PullRequest, PullRequestData, RecentPullRequest};
 
 #[derive(Clone)]
 pub struct GitHubClient {
@@ -27,6 +27,27 @@ impl GitHubClient {
             .build()
             .context("build GitHub HTTP client")?;
         Ok(Self { http })
+    }
+
+    pub async fn load_recent_pull_requests(
+        &self,
+        repository: &str,
+        limit: usize,
+    ) -> Result<Vec<RecentPullRequest>> {
+        let limit = limit.clamp(1, 100);
+        let url = format!(
+            "https://api.github.com/repos/{repository}/pulls?state=all&sort=updated&direction=desc&per_page={limit}"
+        );
+        self.http
+            .get(url)
+            .send()
+            .await
+            .context("request recent pull requests")?
+            .error_for_status()
+            .context("GitHub rejected recent pull request request")?
+            .json()
+            .await
+            .context("decode recent pull requests")
     }
 
     pub async fn load_pull_request(

@@ -16,6 +16,37 @@ pub struct PullRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct RecentPullRequest {
+    pub number: u64,
+    pub title: String,
+    pub body: Option<String>,
+    pub state: String,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub merged_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: String,
+    pub user: GitHubUser,
+    pub base: GitRef,
+    pub head: GitRef,
+}
+
+impl RecentPullRequest {
+    pub fn state_label(&self) -> &'static str {
+        if self.merged_at.is_some() {
+            "MERGED"
+        } else if self.draft {
+            "DRAFT"
+        } else if self.state.eq_ignore_ascii_case("open") {
+            "OPEN"
+        } else {
+            "CLOSED"
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct GitHubUser {
     pub login: String,
 }

@@ -6,7 +6,134 @@ It is built around one rule:
 
 > Review is not “the diff looks fine”. Review is evidence that the change stayed in scope, preserves architecture boundaries, behaves as intended, and is safe to merge.
 
-The application uses a Ratatui terminal UI and an OpenAI-compatible LLM endpoint. Reviewers start from the whole pull request, then drill down through review gates, affected components, files, hunks, lines, and AI findings.
+The application uses a Ratatui terminal UI. A reviewer starts from the recent pull-request list, enters one PR, sees the whole change first, and then drills down through review gates, affected components, files, hunks, changed lines, and AI findings.
+
+## Quick start
+
+For the main BurnCloud repository, the normal workflow is now just:
+
+```bash
+cargo run
+```
+
+BurnCloud Review opens a Ratatui picker for `burncloud/burncloud`:
+
+```text
+Recent Pull Requests
+
+▶ #412  [OPEN]   Add model runtime discovery
+  #411  [OPEN]   Fix provider routing
+  #410  [MERGED] Improve network status
+  ...
+```
+
+Use `↑` / `↓` to select a PR and press `Enter` to open it. Press `Esc` inside a review to return to the PR list.
+
+Public repositories can be read without a GitHub token, but GitHub rate limits unauthenticated requests. For regular use, set `GITHUB_TOKEN`.
+
+PowerShell:
+
+```powershell
+$env:GITHUB_TOKEN="github_pat_xxx"
+cargo run
+```
+
+Bash:
+
+```bash
+export GITHUB_TOKEN=github_pat_xxx
+cargo run
+```
+
+## Local Codex reviewer
+
+BurnCloud Review can directly use an installed and already-authenticated local Codex CLI. No OpenAI-compatible HTTP server is required when Codex is available.
+
+Check that Codex works locally:
+
+```bash
+codex --version
+```
+
+The default AI backend is `auto`:
+
+```text
+auto
+├── local Codex found  -> use Codex CLI
+└── Codex not found    -> use OpenAI-compatible HTTP backend
+```
+
+To require local Codex and fail instead of falling back:
+
+```bash
+cargo run -- --ai-backend codex
+```
+
+The local reviewer is launched as an ephemeral, read-only Codex execution. BurnCloud Review supplies the PR metadata, patches, CI evidence, and a strict JSON output schema. Codex is used as an independent reviewer and is not allowed to modify the repository during this review path.
+
+Normally Codex uses the model already configured by the local CLI. To override it:
+
+PowerShell:
+
+```powershell
+$env:BCR_CODEX_MODEL="your-model"
+cargo run
+```
+
+Bash:
+
+```bash
+export BCR_CODEX_MODEL=your-model
+cargo run
+```
+
+If Codex is installed somewhere unusual, specify the executable explicitly:
+
+```bash
+cargo run -- --ai-backend codex --codex-bin /path/to/codex
+```
+
+## HTTP AI backend
+
+The previous OpenAI-compatible backend remains available. Force it with:
+
+```bash
+cargo run -- --ai-backend http
+```
+
+By default the HTTP backend expects a local BurnCloud Node:
+
+```text
+http://localhost:3000/v1
+model = deepseek-v3
+```
+
+Configure another OpenAI-compatible endpoint with:
+
+```bash
+export BCR_AI_BASE_URL=https://provider.example/v1
+export BCR_AI_API_KEY=...
+export BCR_AI_MODEL=your-review-model
+cargo run -- --ai-backend http
+```
+
+## Optional direct launch
+
+The interactive PR picker is the default, but command-line shortcuts are still supported.
+
+Open another repository and choose a PR in the UI:
+
+```bash
+cargo run -- --repo owner/repository
+```
+
+Open a specific PR directly:
+
+```bash
+cargo run -- --repo burncloud/burncloud --pr 123
+```
+
+The default repository can also be changed with `BCR_REPO`.
 
 ## Review model
 
@@ -28,50 +155,15 @@ Risk levels are `R0` through `R4`:
 | `R3` | Network control-plane / auth / security / identity | stronger human review |
 | `R4` | billing / settlement / clearing / wallet / ledger | strongest evidence and multi-reviewer policy |
 
-The deterministic path-based classifier runs before the LLM. The model may escalate risk, but it is never the only source of truth.
+The deterministic path-based classifier runs before the model. A model may escalate risk, but it cannot lower a deterministic risk classification. Likewise, failed or unknown hard CI evidence cannot be promoted to PASS by a model response.
 
-## Run
-
-```bash
-cargo run -- --repo burncloud/burncloud --pr 123
-```
-
-GitHub authentication:
-
-```bash
-export GITHUB_TOKEN=github_pat_xxx
-```
-
-### AI connection
-
-By default BurnCloud Review expects a local BurnCloud Node:
+## Interactive flow
 
 ```text
-http://localhost:3000/v1
-model = deepseek-v3
-```
-
-So once BurnCloud Node is running, the reviewer can use the same local `/v1` contract:
-
-```bash
-export BCR_AI_BASE_URL=http://localhost:3000/v1
-export BCR_AI_MODEL=deepseek-v3
-cargo run -- --repo burncloud/burncloud --pr 123
-```
-
-Any OpenAI-compatible provider can be used instead:
-
-```bash
-export BCR_AI_BASE_URL=https://provider.example/v1
-export BCR_AI_API_KEY=...
-export BCR_AI_MODEL=your-review-model
-```
-
-The coding agent and review model should be treated as separate roles. BurnCloud Review prompts the model as an adversarial reviewer and asks it to report missing evidence instead of inventing source facts.
-
-## Interactive navigation
-
-```text
+Recent Pull Requests
+        │
+        │ Enter
+        ▼
 Pull Request
 ├── Review Gates
 │   ├── Scope
@@ -88,9 +180,20 @@ Pull Request
     └── BLOCKER / MAJOR / MINOR / NIT
 ```
 
-The first screen deliberately stays at the PR level. Nothing forces a reviewer to read hundreds of diff lines before understanding risk and scope.
+The review screen deliberately starts at the PR level. Nothing forces a reviewer to read hundreds of diff lines before understanding scope, risk, and impact.
 
-### Keyboard
+## Keyboard
+
+### PR picker
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` | select a recent pull request |
+| `Enter` | open the selected PR |
+| `r` | refresh the recent PR list |
+| `q` / `Esc` | quit |
+
+### PR review
 
 | Key | Action |
 |---|---|
@@ -100,15 +203,18 @@ The first screen deliberately stays at the PR level. Nothing forces a reviewer t
 | `Enter` | toggle the current layer open / closed |
 | `Tab` | switch focus between review tree and evidence/detail pane |
 | `PgUp` / `PgDn` | scroll evidence/detail |
-| `a` | run independent AI review |
+| `a` | run the independent Codex / AI review |
 | `r` | refresh PR metadata, patches and CI from GitHub |
+| `Esc` | return to the recent PR picker |
 | `?` | toggle help |
-| `q` | quit |
+| `q` | quit BurnCloud Review |
 
 Suggested reviewer path:
 
 ```text
-PR
+Recent PR list
+↓
+PR overview
 ↓
 Risk + Review Gates
 ↓
@@ -125,21 +231,23 @@ AI Findings + Evidence
 Human merge decision
 ```
 
-## What v0.1 already does
+## What the current version does
 
+- Opens directly into a recent-PR Ratatui picker when no PR number is supplied.
+- Defaults to the `burncloud/burncloud` repository.
+- Keeps `--repo` and `--pr` as optional direct-launch shortcuts.
+- Detects and uses a local Codex CLI by default when available.
+- Runs the Codex review in an ephemeral read-only sandbox and requests structured JSON output.
+- Keeps the OpenAI-compatible HTTP reviewer as an explicit backend and automatic fallback.
 - Pulls PR metadata, changed files and commit status from GitHub.
 - Parses unified patches into file → hunk → changed-line hierarchy.
 - Assigns a deterministic `R0`–`R4` preflight risk level.
 - Infers initial affected components from changed paths.
 - Provides fully keyboard-driven Ratatui navigation.
-- Connects to an OpenAI-compatible LLM for the five-gate independent review.
-- Requires the model to return structured JSON findings and gate results.
 - Anchors findings to file/line only when the supplied patch supports that location.
-- Keeps AI findings separate from the reviewer’s final decision.
+- Keeps model findings separate from the reviewer’s final decision.
 
 ## Next layers
-
-The next milestones are deliberately separate from the first usable console:
 
 - GitHub inline review submission / request-changes / approve actions.
 - BurnCloud architecture policy-as-code loaded from the documentation repository.
