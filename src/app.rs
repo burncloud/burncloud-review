@@ -432,7 +432,11 @@ impl App {
             "REVIEW GATES\n\nA PR is mergeable only when its risk-relevant gates have enough evidence.\n\n",
         );
         for kind in GateKind::ALL {
-            text.push_str(&format!("[{}] {}\n", status_label(self.gate_status(kind)), kind.title()));
+            text.push_str(&format!(
+                "[{}] {}\n",
+                status_label(self.gate_status(kind)),
+                kind.title()
+            ));
         }
         text.push_str("\nExpand this node and inspect each gate independently.");
         text
@@ -440,7 +444,11 @@ impl App {
 
     fn gate_detail(&self, kind: GateKind) -> String {
         let status = self.gate_status(kind);
-        let mut text = format!("{} GATE\nStatus: {}\n\n", kind.title().to_uppercase(), status_label(status));
+        let mut text = format!(
+            "{} GATE\nStatus: {}\n\n",
+            kind.title().to_uppercase(),
+            status_label(status)
+        );
         if let Some(review) = self.gate_review(kind) {
             text.push_str(&review.summary);
             if !review.items.is_empty() {
@@ -593,7 +601,13 @@ impl App {
         let Some(report) = &self.report else {
             return "AI FINDINGS\n\nNo AI review yet. Press 'a'.".into();
         };
-        let counts = |severity| report.findings.iter().filter(|f| f.severity == severity).count();
+        let counts = |severity| {
+            report
+                .findings
+                .iter()
+                .filter(|f| f.severity == severity)
+                .count()
+        };
         format!(
             "AI FINDINGS\n\nBLOCKER: {}\nMAJOR: {}\nMINOR: {}\nNIT: {}\n\nFindings are advisory evidence. The reviewer still owns the merge decision.",
             counts(Severity::Blocker),
