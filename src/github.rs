@@ -69,19 +69,15 @@ impl GitHubClient {
             .context("decode pull request metadata")?;
 
         let files = self.load_files(repository, number).await?;
-        let ci = self
-            .load_status(repository, &pr.head.sha)
-            .await
-            .unwrap_or_else(|_| CombinedStatus {
-                state: "unknown".into(),
-                statuses: Vec::new(),
-            });
 
         Ok(PullRequestData {
             repository: repository.to_string(),
             pr,
             files,
-            ci,
+            ci: CombinedStatus {
+                state: "not_run".into(),
+                statuses: Vec::new(),
+            },
         })
     }
 
@@ -109,19 +105,5 @@ impl GitHubClient {
             }
         }
         Ok(files)
-    }
-
-    async fn load_status(&self, repository: &str, sha: &str) -> Result<CombinedStatus> {
-        let url = format!("https://api.github.com/repos/{repository}/commits/{sha}/status");
-        self.http
-            .get(url)
-            .send()
-            .await
-            .context("request commit status")?
-            .error_for_status()
-            .context("GitHub rejected commit status request")?
-            .json()
-            .await
-            .context("decode commit status")
     }
 }
