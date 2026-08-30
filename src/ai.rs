@@ -3,7 +3,10 @@ use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::models::{AiReviewReport, PullRequestData};
+use crate::{
+    models::{AiReviewReport, GateStatus, PullRequestData},
+    review::{classify_risk, max_risk},
+};
 
 #[derive(Clone)]
 pub struct AiClient {
@@ -83,7 +86,17 @@ impl AiClient {
             .ok_or_else(|| anyhow!("AI response did not contain message content"))?;
         let json_text = extract_json(content)
             .ok_or_else(|| anyhow!("AI review did not return a JSON object"))?;
-        serde_json::from_str(json_text).context("decode AI review report JSON")
+        let mut report: AiReviewReport =
+            serde_json::from_str(json_text).context("decode AI review report JSON")?;
+
+        // The model is an advisory reviewer. It may escalate deterministic risk, never lower it.
+        report.risk = max_risk(classify_risk(&data.files), report.risk);
+
+        // Hard CI evidence has precedence over a model's Evidence Gate opinion.
+        report.gates.evidence.status =
+            clamp_evidence_status(report.gates.evidence.status, &data.ci.state);
+
+        Ok(report)
     }
 }
 
@@ -243,4 +256,54 @@ fn extract_json(value: &str) -> Option<&str> {
     let start = value.find('{')?;
     let end = value.rfind('}')?;
     (end >= start).then_some(&value[start..=end])
+}
+
+fn clamp_evidence_status(ai_status: GateStatus, ci_state: &str) -> GateStatus {
+    match ci_state.to_ascii_lowercase().as_str() {
+        "failure" | "error" => GateStatus::Fail,
+        "pending" | "expected" => {
+            if ai_status == GateStatus::Fail {
+                GateStatus::Fail
+            } else {
+                GateStatus::Pending
+            }
+        }
+        "success" => ai_status,
+        _ => {
+            if ai_status == GateStatus::Fail {
+                GateStatus::Fail
+            } else {
+                GateStatus::Warn
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_ci_cannot_be_overridden_by_ai() {
+        assert_eq!(
+            clamp_evidence_status(GateStatus::Pass, "failure"),
+            GateStatus::Fail
+        );
+    }
+
+    #[test]
+    fn unknown_ci_cannot_be_promoted_to_pass() {
+        assert_eq!(
+            clamp_evidence_status(GateStatus::Pass, "unknown"),
+            GateStatus::Warn
+        );
+    }
+
+    #[test]
+    fn successful_ci_keeps_model_gate_opinion() {
+        assert_eq!(
+            clamp_evidence_status(GateStatus::Warn, "success"),
+            GateStatus::Warn
+        );
+    }
 }
