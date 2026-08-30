@@ -12,7 +12,14 @@ mod review;
 mod reviewer;
 mod ui;
 
-use std::{io, time::Duration};
+use std::{
+    io,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use app::App;
@@ -24,9 +31,11 @@ use crossterm::{
 };
 use picker::PrPicker;
 use ratatui::{backend::CrosstermBackend, Terminal};
+use tokio::task::JoinHandle;
 
 use crate::{
     github::GitHubClient,
+    models::AiReviewReport,
     reviewer::{ReviewBackend, ReviewBackendOptions},
 };
 
@@ -58,6 +67,10 @@ struct Args {
     #[arg(long, env = "BCR_CODEX_MODEL")]
     codex_model: Option<String>,
 
+    /// Maximum time for one AI review before it is terminated.
+    #[arg(long, env = "BCR_REVIEW_TIMEOUT_SECS", default_value_t = 300)]
+    review_timeout_secs: u64,
+
     /// OpenAI-compatible base URL used by the HTTP fallback/backend.
     #[arg(
         long,
@@ -88,6 +101,7 @@ async fn main() -> Result<()> {
         http_base_url: args.ai_base_url,
         http_api_key: args.ai_api_key,
         http_model: args.ai_model,
+        review_timeout_secs: args.review_timeout_secs,
     })?;
 
     run_terminal(args.repo, args.pr, github, reviewer).await
@@ -215,6 +229,12 @@ enum ReviewExit {
     Quit,
 }
 
+struct ActiveReview {
+    handle: JoinHandle<Result<AiReviewReport>>,
+    cancel: Arc<AtomicBool>,
+    started_at: Instant,
+}
+
 async fn review_event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -222,9 +242,39 @@ async fn review_event_loop(
     reviewer: &ReviewBackend,
     reviewer_summary: &str,
 ) -> Result<ReviewExit> {
+    let mut active_review: Option<ActiveReview> = None;
+
     loop {
         if app.should_quit {
             return Ok(ReviewExit::Quit);
+        }
+
+        if active_review
+            .as_ref()
+            .is_some_and(|active| active.handle.is_finished())
+        {
+            let active = active_review.take().expect("finished review exists");
+            match active.handle.await {
+                Ok(Ok(report)) => {
+                    app.set_report(report);
+                    app.status = "AI 审查完成。可以逐层查看关卡、文件和审查发现。".into();
+                }
+                Ok(Err(error)) => {
+                    app.status = format!("AI 审查结束：{error:#}");
+                }
+                Err(error) => {
+                    app.status = format!("AI 审查任务异常结束：{error}");
+                }
+            }
+            app.busy = false;
+        }
+
+        if let Some(active) = &active_review {
+            let elapsed = format_elapsed(active.started_at.elapsed());
+            app.status = format!(
+                "AI 审查正在后台运行 · 已耗时 {elapsed} · 最长 {} 秒 · 按 C 取消",
+                reviewer.timeout_secs()
+            );
         }
 
         terminal.draw(|frame| ui::draw(frame, app, reviewer_summary))?;
@@ -246,19 +296,30 @@ async fn review_event_loop(
             KeyCode::Enter if !app.show_help => app.toggle_selected(),
             KeyCode::PageUp if !app.show_help => app.page_up(),
             KeyCode::PageDown if !app.show_help => app.page_down(),
+            KeyCode::Char('c') | KeyCode::Char('C') if active_review.is_some() => {
+                if let Some(active) = &active_review {
+                    active.cancel.store(true, Ordering::Relaxed);
+                    app.status = "正在取消 AI 审查并终止本地 Codex 子进程...".into();
+                }
+            }
             KeyCode::Char('a') | KeyCode::Char('A') if !app.show_help && !app.busy => {
                 app.busy = true;
-                app.status =
-                    "Running independent review across scope/code/behavior/architecture/evidence..."
-                        .into();
-                terminal.draw(|frame| ui::draw(frame, app, reviewer_summary))?;
-                match reviewer.review(&app.data).await {
-                    Ok(report) => app.set_report(report),
-                    Err(error) => {
-                        app.status = format!("AI review failed: {error:#}");
-                    }
-                }
-                app.busy = false;
+                let cancel = Arc::new(AtomicBool::new(false));
+                let task_cancel = Arc::clone(&cancel);
+                let task_reviewer = reviewer.clone();
+                let data = app.data.clone();
+                let handle = tokio::spawn(async move {
+                    task_reviewer.review(&data, task_cancel).await
+                });
+                active_review = Some(ActiveReview {
+                    handle,
+                    cancel,
+                    started_at: Instant::now(),
+                });
+                app.status = format!(
+                    "AI 审查已在后台启动 · 最长 {} 秒 · 按 C 取消",
+                    reviewer.timeout_secs()
+                );
             }
             KeyCode::Char('r') | KeyCode::Char('R') if !app.show_help && !app.busy => {
                 app.busy = true;
@@ -277,6 +338,11 @@ async fn review_event_loop(
             _ => {}
         }
     }
+}
+
+fn format_elapsed(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    format!("{:02}:{:02}", seconds / 60, seconds % 60)
 }
 
 fn read_key() -> Result<Option<KeyCode>> {
