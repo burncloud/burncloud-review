@@ -235,7 +235,7 @@ impl GateReview {
 
         for (index, section) in self.sections.iter().enumerate() {
             if !text.is_empty() {
-                text.push_str("\n");
+                text.push('\n');
             }
             let title = if section.title.trim().is_empty() {
                 format!("审查项 {}", index + 1)
@@ -257,7 +257,7 @@ impl GateReview {
 
         if !self.missing_evidence.is_empty() {
             if !text.is_empty() {
-                text.push_str("\n");
+                text.push('\n');
             }
             text.push_str("\n━━ 缺失证据 / 仍需验证 ━━\n");
             for item in &self.missing_evidence {
