@@ -72,16 +72,18 @@ impl CodexClient {
             .arg("--output-schema")
             .arg(&temp.schema)
             .arg("--output-last-message")
-            .arg(&temp.output)
+            .arg(&temp.output);
+
+        if let Some(model) = &self.model {
+            command.arg("--model").arg(model);
+        }
+
+        command
             .arg("-")
             .current_dir(std::env::temp_dir())
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
-
-        if let Some(model) = &self.model {
-            command.arg("--model").arg(model);
-        }
 
         let mut child = command.spawn().with_context(|| {
             format!(
@@ -300,7 +302,7 @@ fn clamp_evidence_status(ai_status: GateStatus, ci_state: &str) -> GateStatus {
     }
 }
 
-const REVIEW_OUTPUT_SCHEMA: &str = r#"{
+const REVIEW_OUTPUT_SCHEMA: &str = r##"{
   "type": "object",
   "additionalProperties": false,
   "required": ["summary", "risk", "merge_recommendation", "gates", "affected_components", "findings"],
@@ -363,7 +365,7 @@ const REVIEW_OUTPUT_SCHEMA: &str = r#"{
       }
     }
   }
-}"#;
+}"##;
 
 #[cfg(test)]
 mod tests {
