@@ -8,25 +8,45 @@ pub fn classify_risk(files: &[ChangedFile]) -> RiskLevel {
         let path = file.filename.to_ascii_lowercase();
         let candidate = if contains_any(
             &path,
-            &["billing", "settlement", "clearing", "wallet", "payment", "ledger"],
+            &[
+                "billing",
+                "settlement",
+                "clearing",
+                "wallet",
+                "payment",
+                "ledger",
+            ],
         ) {
             RiskLevel::R4
         } else if contains_any(
             &path,
-            &["network", "auth", "security", "identity", "crypto", "permission"],
+            &[
+                "network",
+                "auth",
+                "security",
+                "identity",
+                "crypto",
+                "permission",
+            ],
         ) {
             RiskLevel::R3
         } else if contains_any(
             &path,
-            &["router", "runtime", "scheduler", "process", "model", "hardware", "server"],
+            &[
+                "router",
+                "runtime",
+                "scheduler",
+                "process",
+                "model",
+                "hardware",
+                "server",
+            ],
         ) {
             RiskLevel::R2
-        } else if contains_any(&path, &["ui", "client", "tui", "frontend", "css"]) {
-            RiskLevel::R1
-        } else if !contains_any(&path, &["docs", "readme", ".md", ".github"]) {
-            RiskLevel::R1
-        } else {
+        } else if contains_any(&path, &["docs", "readme", ".md", ".github"]) {
             RiskLevel::R0
+        } else {
+            RiskLevel::R1
         };
         risk = max_risk(risk, candidate);
     }
