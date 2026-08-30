@@ -5,7 +5,6 @@ pub struct PullRequest {
     pub number: u64,
     pub title: String,
     pub body: Option<String>,
-    pub html_url: String,
     pub state: String,
     pub draft: bool,
     pub additions: u64,
@@ -50,7 +49,6 @@ pub struct CommitStatus {
     pub state: String,
     pub context: String,
     pub description: Option<String>,
-    pub target_url: Option<String>,
 }
 
 #[derive(Debug, Clone)]
